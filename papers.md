@@ -11,3 +11,5 @@ https://github.com/tinghuiz/SfMLearner
 https://github.com/kentsommer/tensorflow-posenet
 https://arxiv.org/abs/1505.07427
 
+
+https://github.com/mrharicot/monodepth
