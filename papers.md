@@ -8,8 +8,13 @@ https://arxiv.org/pdf/1806.04807.pdf
 
 https://github.com/tinghuiz/SfMLearner
 
+
 https://github.com/kentsommer/tensorflow-posenet
 https://arxiv.org/abs/1505.07427
 
 
 https://github.com/mrharicot/monodepth
+
+
+https://arxiv.org/abs/1803.02276
+https://github.com/yzcjtr/GeoNet
