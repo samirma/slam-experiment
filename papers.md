@@ -22,3 +22,7 @@ https://github.com/yzcjtr/GeoNet
 
 CNN_SLAM:
 https://github.com/iitmcvg/CNN_SLAM.git
+
+
+https://shkspr.mobi/blog/2018/04/reconstructing-3d-models-from-the-last-jedi/
+
