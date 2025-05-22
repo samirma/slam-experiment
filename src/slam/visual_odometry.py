@@ -172,25 +172,37 @@ class VisualOdometry:
 
             pts_prev = np.float32([self.prev_kps[i].pt for i in pts_prev_indices]).reshape(-1, 1, 2)
             pts_curr = np.float32([kps[i].pt for i in pts_curr_indices]).reshape(-1, 1, 2)
+
+            # Undistort points
+            # The P=self.K argument projects points to the camera matrix K, which is common for VO/SLAM.
+            # Input pts_prev/pts_curr are shape (N, 1, 2), output will also be (N, 1, 2)
+            pts_prev_undistorted = cv2.undistortPoints(pts_prev, self.K, self.dist_coeffs, P=self.K)
+            pts_curr_undistorted = cv2.undistortPoints(pts_curr, self.K, self.dist_coeffs, P=self.K)
             
-            # Estimate Essential Matrix (E)
+            # Estimate Essential Matrix (E) using undistorted points
             # E relates corresponding points in two images assuming pinhole camera model and K is known.
             # Points are expected as: current_points, previous_points
-            E, e_mask = cv2.findEssentialMat(pts_curr, pts_prev, 
-                                             cameraMatrix=self.K, distCoeffs=self.dist_coeffs,
+            # distCoeffs is not needed here as points are already undistorted.
+            E, e_mask = cv2.findEssentialMat(pts_curr_undistorted, pts_prev_undistorted, 
+                                             cameraMatrix=self.K, # K is still needed for the Essential matrix properties
                                              method=cv2.RANSAC, prob=0.999, threshold=1.0)
 
             if E is not None and e_mask is not None:
-                # Recover relative pose (R_rel, t_rel) from E.
+                # Prepare inlier points for recoverPose using the mask from findEssentialMat
+                # These points must be the same ones used in findEssentialMat (i.e., undistorted)
+                pts_curr_undistorted_inliers = pts_curr_undistorted[e_mask.ravel() == 1]
+                pts_prev_undistorted_inliers = pts_prev_undistorted[e_mask.ravel() == 1]
+                
+                # Recover relative pose (R_rel, t_rel) from E using undistorted inlier points.
                 # R_rel: Rotation from previous camera frame to current camera frame.
                 # t_rel: Translation of current camera origin relative to previous camera origin,
                 #        expressed in the *previous* camera's coordinate system.
-                # Pass the inlier points (pts_curr[e_mask.ravel()==1] and pts_prev[e_mask.ravel()==1]) to recoverPose.
+                # distCoeffs is set to None as points are already undistorted.
                 num_inliers, R_rel, t_rel, rp_mask = cv2.recoverPose(E, 
-                                                                     points1=pts_curr[e_mask.ravel() == 1], 
-                                                                     points2=pts_prev[e_mask.ravel() == 1], 
+                                                                     points1=pts_curr_undistorted_inliers, 
+                                                                     points2=pts_prev_undistorted_inliers, 
                                                                      cameraMatrix=self.K, 
-                                                                     distCoeffs=self.dist_coeffs
+                                                                     distCoeffs=None # Points are undistorted
                                                                     )
 
                 if num_inliers >= self.min_features_for_tracking: # Check if enough inliers for a stable pose
