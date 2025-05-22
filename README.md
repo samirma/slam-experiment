@@ -46,28 +46,111 @@ This project implements a real-time monocular Simultaneous Localization and Mapp
 
 ## Setup Instructions
 
-1.  **Clone the Repository:**
+1.  **Prerequisites:**
+    *   Ensure you have Python 3.12.10 installed. You can download it from [python.org](https://www.python.org/).
+    *   Ensure you have Pip installed and updated (usually comes with Python).
+
+2.  **Clone the Repository:**
     ```bash
     git clone <repository_url>
     cd <repository_directory>
     ```
 
-2.  **Create Conda Environment:**
-    Ensure you have Anaconda or Miniconda installed. Then, create the environment using the provided file:
+3.  **Create a Virtual Environment (Recommended):**
+    It's highly recommended to use a virtual environment to manage project dependencies.
     ```bash
-    conda env create -f environment.yml
+    python -m venv venv
     ```
-    This will install all necessary Python dependencies, including OpenCV, Open3D, TensorFlow, and TensorFlow Hub.
+    Activate the virtual environment:
+    *   On Windows:
+        ```bash
+        .\venv\Scripts\activate
+        ```
+    *   On macOS and Linux:
+        ```bash
+        source venv/bin/activate
+        ```
 
-3.  **Activate Conda Environment:**
+4.  **Install Dependencies:**
+    Install all necessary Python dependencies using the `requirements.txt` file:
     ```bash
-    conda activate 3d-slam-system
+    pip install -r requirements.txt
     ```
-    (The environment name is defined in `environment.yml`, ensure it matches or use the correct name if you changed it).
 
-4.  **Camera Connection:**
+5.  **Camera Connection:**
     *   Ensure you have a webcam connected to your system if you intend to use live camera input.
     *   The default camera ID used is `0`. If you have multiple cameras, you might need to change this ID in the scripts (e.g., in `MonocularCamera(0)` calls).
+
+## Running with Docker
+
+This project includes a `Dockerfile` to build a containerized environment with all dependencies pre-installed.
+
+**1. Build the Docker Image:**
+
+Navigate to the root directory of the project (where the `Dockerfile` is located) and run:
+```bash
+docker build -t 3d-slam-system .
+```
+This command builds a Docker image tagged as `3d-slam-system`.
+
+**2. Run the Docker Container:**
+
+The default command for the container is `python scripts/run_pointcloud_generation.py`.
+
+*   **Basic Run (No Camera, No GUI, Ephemeral Data):**
+    ```bash
+    docker run -it --rm 3d-slam-system
+    ```
+    This will run the main script. However, without camera access, it will likely fail if the script expects a live camera. For scripts that process existing files and don't require live input or GUI, this might suffice.
+
+*   **With Camera Access (Linux):**
+    To allow the container to access your webcam, you need to pass the device. `/dev/video0` is commonly the first webcam.
+    ```bash
+    docker run -it --rm --device=/dev/video0 3d-slam-system
+    ```
+    If you have multiple cameras, find the correct device (e.g., `/dev/video1`, etc.).
+
+*   **With GUI Display (Linux - X11 Forwarding):**
+    The main script `run_pointcloud_generation.py` uses Open3D for visualization, which requires a display. To enable GUI applications from within the container to display on your host's X server:
+    ```bash
+    docker run -it --rm \
+        --device=/dev/video0 \
+        -e DISPLAY=$DISPLAY \
+        -v /tmp/.X11-unix:/tmp/.X11-unix \
+        3d-slam-system
+    ```
+    Note: X11 forwarding can have security implications and might require `xhost +local:docker` or similar commands on the host, depending on your X server configuration. This setup is primarily for Linux hosts. GUI forwarding on macOS or Windows with Docker Desktop might require different setups (e.g., using an XQuartz for macOS or VcXsrv for Windows).
+
+*   **Persisting Data (Maps and Models):**
+    To save generated maps or downloaded MiDaS models outside the container (so they are not lost when the container stops), use Docker volumes:
+    ```bash
+    docker run -it --rm \
+        --device=/dev/video0 \
+        -e DISPLAY=$DISPLAY \
+        -v /tmp/.X11-unix:/tmp/.X11-unix \
+        -v $(pwd)/data:/app/data \
+        -v $(pwd)/models:/app/models \
+        3d-slam-system
+    ```
+    This mounts the local `./data` directory to `/app/data` in the container and `./models` to `/app/models`.
+    *   Saved maps (e.g., `generated_map_tsdf.ply`) will appear in your local `data` directory.
+    *   Downloaded MiDaS models will be cached in your local `models` directory, preventing re-downloads on subsequent runs.
+
+*   **Running Other Scripts:**
+    You can override the default CMD to run other scripts. For example, to run the camera calibration script:
+    ```bash
+    docker run -it --rm \
+        -v $(pwd)/data:/app/data \
+        3d-slam-system python scripts/calibrate_camera.py
+    ```
+    (Ensure your `data/calibration_images/` directory is populated on the host for this example).
+
+**Important Considerations for Docker:**
+
+*   **Camera Device:** The `--device` flag is Linux-specific. Docker Desktop on Windows and macOS handles camera access differently, often transparently if the application requests it and permissions are granted. You might not need the `--device` flag on these platforms, but it depends on the Docker version and configuration.
+*   **GUI on macOS/Windows:** As mentioned, X11 forwarding is more complex. For macOS, XQuartz is needed. For Windows, VcXsrv or WSLg (with Docker in WSL2) can be used. Simpler alternatives for visualization might involve saving output files and viewing them on the host.
+*   **Performance:** Docker might introduce some performance overhead, especially for I/O operations or if running on a non-native platform (e.g., x86 image on an ARM Mac via Rosetta 2).
+*   **Resource Limits:** By default, Docker containers have access to a portion of the host's resources. For computationally intensive tasks like SLAM, ensure Docker is configured with sufficient CPU and memory.
 
 ## Running the Application
 
@@ -136,8 +219,9 @@ Key Python libraries used:
 *   **TensorFlow & TensorFlow Hub (`tensorflow`, `tensorflow_hub`):** For loading and running the MiDaS depth estimation model.
 *   **NumPy:** For numerical operations.
 *   **PyYAML:** For saving and loading camera calibration data.
+*   **Pandas:** For potential data manipulation tasks (though not heavily used in the core SLAM logic).
 
-These are all included in the `environment.yml` file.
+All required Python packages are listed in `requirements.txt` and can be installed using pip.
 
 ## Known Issues / Limitations
 

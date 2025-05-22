@@ -57,3 +57,7 @@ logs/
 .coverage
 coverage.xml
 htmlcov/
+
+# Downloaded Machine Learning Models
+# Ignore contents of the 'models/' directory where MiDaS models are cached.
+models/
