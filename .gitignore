@@ -1,2 +1,59 @@
+# Jupyter Notebook
 .ipynb_checkpoints/
+
+# IDE specific
 .idea/
+.vscode/
+
+# Python Caches and Compiled Files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.nox/
+.tox/
+
+# Virtual Environments
+.env/
+.venv/
+env/
+venv/
+ENV/
+VENV/
+
+# Build and Distribution
+build/
+dist/
+wheels/
+*.egg
+
+# Data files that should not be versioned
+# Ignore generated maps (allow users to version their own if they choose by not having a generic .ply rule)
+data/generated_map.ply
+data/generated_map_tsdf.ply
+data/test_map.ply # From PointCloudMapper example
+data/test_map_tsdf.ply # From PointCloudMapper example
+data/dummy_camera_calibration.yaml # From CameraParams example
+
+# Ensure camera_calibration.yaml IS versioned (remove if accidentally added by a broader rule)
+# !data/camera_calibration.yaml 
+
+# Test data directory if it contains large files or many generated files (not the tests themselves)
+# data_test_camera_params/ # This was for temporary test files, should be cleaned up by tests
+
+# Operating System Files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Log files
+*.log
+logs/
+
+# Coverage reports
+.coverage
+coverage.xml
+htmlcov/
