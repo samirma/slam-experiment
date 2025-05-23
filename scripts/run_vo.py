@@ -82,7 +82,9 @@ def main():
         
         # Store previous frame for drawing matches
         prev_frame_display = None
-        prev_kps_display = None
+        # This will store the keypoints that correspond to prev_frame_display
+        # and were used as the 'query' set for the matches.
+        keypoints_of_prev_frame_for_drawmatches = None
 
         print("Press 'q' to quit.")
         cv2.namedWindow('VO Output', cv2.WINDOW_AUTOSIZE)
@@ -103,31 +105,45 @@ def main():
 
 
             # --- Visual Odometry Processing ---
-            current_R, current_t, kps, matches = vo.process_frame(frame_bgr)
+            # vo.process_frame uses its internal self.prev_kps (from frame k-1) and new kps (from frame k)
+            # It returns:
+            #   kps_current_frame: keypoints detected in the current frame_bgr
+            #   matches_to_prev: matches where queryIdx refers to vo's internal prev_kps (k-1)
+            #                      and trainIdx refers to kps_current_frame (k)
+            # Internally, vo updates its self.prev_kps to kps_current_frame at the end.
+            current_R, current_t, kps_current_frame, matches_to_prev = vo.process_frame(frame_bgr)
             
             # --- Visualization ---
             # Draw keypoints on the current frame
-            frame_with_kps = cv2.drawKeypoints(frame_bgr, kps, None, color=(0, 255, 0), 
+            frame_with_kps = cv2.drawKeypoints(frame_bgr, kps_current_frame, None, color=(0, 255, 0), 
                                                flags=cv2.DrawMatchesFlags_DEFAULT)
 
             # Draw matches if previous frame and keypoints are available
-            # Note: vo.prev_kps refers to keypoints in vo.prev_frame_gray (which is k-1)
-            # and kps are for current frame_gray (k). Matches are between these.
-            if prev_frame_display is not None and vo.prev_kps is not None and len(matches) > 0:
-                # vo.prev_kps are the 'query' keypoints, kps are the 'train' keypoints for the matches
-                img_matches = cv2.drawMatches(prev_frame_display, vo.prev_kps, # Use vo.prev_kps as they correspond to vo.prev_des
-                                              frame_bgr, kps, 
-                                              matches[:50], None, # Draw top 50 matches
-                                              flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
-                output_display = img_matches
+            if prev_frame_display is not None and \
+               keypoints_of_prev_frame_for_drawmatches is not None and \
+               len(matches_to_prev) > 0:
+                
+                # Ensure keypoints_of_prev_frame_for_drawmatches is not empty if matches exist
+                if not keypoints_of_prev_frame_for_drawmatches and matches_to_prev:
+                     # This case should ideally not happen if logic is correct, but as a safeguard:
+                     print("Warning: Have matches but keypoints_of_prev_frame_for_drawmatches is empty. Skipping drawing matches.")
+                     output_display = frame_with_kps
+                else:
+                    img_matches = cv2.drawMatches(
+                        prev_frame_display, keypoints_of_prev_frame_for_drawmatches, # These are kps from frame k-1
+                        frame_bgr, kps_current_frame, # These are kps from frame k
+                        matches_to_prev[:50], None, # Draw top 50 matches
+                        flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS
+                    )
+                    output_display = img_matches
             else:
                 output_display = frame_with_kps
 
             cv2.imshow('VO Output', output_display)
 
-            # Update previous frame and keypoints for next iteration's match drawing
-            prev_frame_display = frame_bgr.copy() # Store the color frame for display
-            # prev_kps_display = kps # kps are for the current frame, which becomes prev_kps in next iteration
+            # Update state for the next iteration's drawing
+            prev_frame_display = frame_bgr.copy()
+            keypoints_of_prev_frame_for_drawmatches = kps_current_frame # Current kps become previous for next iter
 
             # Trajectory Visualization
             # current_t is the position of the camera in the world (relative to start)

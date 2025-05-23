@@ -47,8 +47,10 @@ This project implements a real-time monocular Simultaneous Localization and Mapp
 
 ## Setup Instructions
 
+It is recommended to use Python 3.11 to set up your local development environment, as this version has good compatibility with all project dependencies, including `open3d` on macOS.
+
 1.  **Prerequisites:**
-    *   Ensure you have Python 3.12.10 installed. You can download it from [python.org](https://www.python.org/).
+    *   Ensure you have Python 3.11 installed. You can download it from [python.org](https://www.python.org/).
     *   Ensure you have Pip installed and updated (usually comes with Python).
 
 2.  **Clone the Repository:**
@@ -60,16 +62,16 @@ This project implements a real-time monocular Simultaneous Localization and Mapp
 3.  **Create a Virtual Environment (Recommended):**
     It's highly recommended to use a virtual environment to manage project dependencies.
     ```bash
-    python -m venv venv
+    python3.11 -m venv .venv
     ```
     Activate the virtual environment:
     *   On Windows:
         ```bash
-        .\venv\Scripts\activate
+        .\.venv\Scripts\activate
         ```
     *   On macOS and Linux:
         ```bash
-        source venv/bin/activate
+        source .venv/bin/activate
         ```
 
 4.  **Install Dependencies:**
@@ -105,7 +107,7 @@ This project implements a real-time monocular Simultaneous Localization and Mapp
 
 ## Running with Docker
 
-This project includes a `Dockerfile` to build a containerized environment with all dependencies pre-installed.
+This project includes a `Dockerfile` to build a containerized environment with all dependencies pre-installed. The Docker image uses **Python 3.11**, aligning with the recommended local setup for better compatibility (especially for `open3d` on macOS).
 
 **1. Build the Docker Image:**
 
@@ -115,76 +117,79 @@ docker build -t 3d-slam-system .
 ```
 This command builds a Docker image tagged as `3d-slam-system`.
 
+**For macOS M-series (M1/M2/M3) users:**
+The Docker image is built on a multi-architecture base image (`python:3.11-slim-bookworm`) that supports `arm64`. Docker on your M-series Mac should automatically pull and use the correct architecture, so you typically **do not need to specify a `--platform` flag**.
+
 **2. Run the Docker Container:**
 
 The default command for the container is `python scripts/run_pointcloud_generation.py`.
 
-*   **Basic Run (No Camera, No GUI, Ephemeral Data):**
-    ```bash
-    docker run -it --rm 3d-slam-system
-    ```
-    This will run the main script. However, without camera access, it will likely fail if the script expects a live camera. For scripts that process existing files and don't require live input or GUI, this might suffice.
-
-*   **With Camera Access (Linux):**
-    To allow the container to access your webcam, you need to pass the device. `/dev/video0` is commonly the first webcam.
-    ```bash
-    docker run -it --rm --device=/dev/video0 3d-slam-system
-    ```
-    If you have multiple cameras, find the correct device (e.g., `/dev/video1`, etc.).
-
-*   **With GUI Display (Linux - X11 Forwarding):**
-    The main script `run_pointcloud_generation.py` uses Open3D for visualization, which requires a display. To enable GUI applications from within the container to display on your host's X server:
+*   **General Run Command Structure:**
     ```bash
     docker run -it --rm \
-        --device=/dev/video0 \
-        -e DISPLAY=$DISPLAY \
-        -v /tmp/.X11-unix:/tmp/.X11-unix \
-        3d-slam-system
-    ```
-    Note: X11 forwarding can have security implications and might require `xhost +local:docker` or similar commands on the host, depending on your X server configuration. This setup is primarily for Linux hosts. GUI forwarding on macOS or Windows with Docker Desktop might require different setups (e.g., using an XQuartz for macOS or VcXsrv for Windows).
-
-*   **Persisting Data (Maps and PyTorch Hub Cache):**
-    *   **Maps & Calibration Data:** To save generated maps and camera calibration files outside the container (so they are not lost when the container stops), mount the local `data` directory:
-        ```bash
-        -v $(pwd)/data:/app/data
-        ```
-        Saved maps (e.g., `generated_map_tsdf.ply`) and `camera_calibration.yaml` will appear in your local `data` directory.
-    *   **PyTorch Hub Model Caching:** MiDaS models are downloaded by PyTorch Hub and cached within the container (typically in `/root/.cache/torch/hub`, as the container often runs as root). If you want to persist this cache across container *rebuilds* or different containers, you can mount your host's PyTorch Hub cache directory to the container's cache location. This is optional but can save re-downloading models frequently.
-        ```bash
-        # Example for Linux/macOS hosts:
-        -v ~/.cache/torch/hub:/root/.cache/torch/hub
-        ```
-        The local `models/` directory is not used by the PyTorch MiDaS implementation for caching.
-
-    **Example `docker run` with GUI, Camera, and Persistent Data/Cache:**
-    ```bash
-    docker run -it --rm \
-        --device=/dev/video0 \
-        -e DISPLAY=$DISPLAY \
-        -v /tmp/.X11-unix:/tmp/.X11-unix \
+        [--device=/dev/video0] \
+        [-e DISPLAY=$DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix] \
         -v $(pwd)/data:/app/data \
         -v ~/.cache/torch/hub:/root/.cache/torch/hub \
-        3d-slam-system
+        3d-slam-system [python scripts/your_script.py --args]
     ```
+    *   `--device=/dev/video0`: (Linux specific) Grants camera access. May not be needed on Docker Desktop for Mac/Windows if camera access is handled by the desktop application.
+    *   `-e DISPLAY=$DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix`: (Linux specific) For GUI forwarding. See notes below for macOS/Windows.
+    *   `-v $(pwd)/data:/app/data`: **Crucial for persisting data.** Mounts your local `./data` directory (containing `camera_calibration.yaml`, saved maps, calibration images) into the container's `/app/data`. **Ensure your local `data` directory exists.**
+    *   `-v ~/.cache/torch/hub:/root/.cache/torch/hub`: **Recommended for persisting MiDaS models.** Mounts your host's PyTorch Hub cache. This prevents re-downloading models every time you run or rebuild the container. The container runs as root, so its cache is at `/root/.cache/torch/hub`.
+    *   `3d-slam-system`: The name of the image you built.
+    *   `[python scripts/your_script.py --args]`: Optional. If not provided, runs the default CMD (`python scripts/run_pointcloud_generation.py`).
 
-*   **Running Other Scripts:**
-    You can override the default CMD to run other scripts. For example, to run the interactive calibration assistant:
-    ```bash
-    docker run -it --rm \
-        --device=/dev/video0 \
-        -e DISPLAY=$DISPLAY \
-        -v /tmp/.X11-unix:/tmp/.X11-unix \
-        -v $(pwd)/data:/app/data \
-        3d-slam-system python scripts/calibration_assistant.py
-    ```
-    (Ensure your `data/calibration_images/` directory exists on the host if you plan to save images there via the assistant, though the assistant saves directly to the mounted `/app/data`).
+*   **Workflow for Camera Calibration and Running Main Application:**
+
+    1.  **Create `data` directory on host:** If it doesn't exist, create it: `mkdir data`.
+    2.  **Run Calibration Assistant (if `camera_calibration.yaml` is missing or needs update):**
+        This script will save `camera_calibration.yaml` and calibration images into the mounted `/app/data` directory (which is your local `./data` directory).
+        ```bash
+        # Linux example with camera and GUI
+        docker run -it --rm \
+            --device=/dev/video0 \
+            -e DISPLAY=$DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix \
+            -v $(pwd)/data:/app/data \
+            -v ~/.cache/torch/hub:/root/.cache/torch/hub \
+            3d-slam-system python scripts/calibration_assistant.py
+        
+        # macOS/Windows (Docker Desktop might handle camera/GUI differently - adapt if needed)
+        # Basic command, assuming Docker Desktop handles camera/GUI:
+        docker run -it --rm \
+            -v $(pwd)/data:/app/data \
+            -v ~/.cache/torch/hub:/root/.cache/torch/hub \
+            3d-slam-system python scripts/calibration_assistant.py
+        ```
+        *Note: The `Dockerfile` copies a `data/camera_calibration.yaml` if present during the build. Running the assistant ensures you use your specific, potentially updated, calibration.*
+
+    3.  **Run Main SLAM Application:**
+        This will use the `camera_calibration.yaml` from your mounted `./data` directory.
+        ```bash
+        # Linux example with camera and GUI
+        docker run -it --rm \
+            --device=/dev/video0 \
+            -e DISPLAY=$DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix \
+            -v $(pwd)/data:/app/data \
+            -v ~/.cache/torch/hub:/root/.cache/torch/hub \
+            3d-slam-system
+            
+        # macOS/Windows (Docker Desktop - adapt if needed)
+        docker run -it --rm \
+            -v $(pwd)/data:/app/data \
+            -v ~/.cache/torch/hub:/root/.cache/torch/hub \
+            3d-slam-system
+        ```
 
 **Important Considerations for Docker:**
 
-*   **Camera Device:** The `--device` flag is Linux-specific. Docker Desktop on Windows and macOS handles camera access differently, often transparently if the application requests it and permissions are granted. You might not need the `--device` flag on these platforms, but it depends on the Docker version and configuration.
-*   **GUI on macOS/Windows:** As mentioned, X11 forwarding is more complex. For macOS, XQuartz is needed. For Windows, VcXsrv or WSLg (with Docker in WSL2) can be used. Simpler alternatives for visualization might involve saving output files and viewing them on the host.
-*   **Performance:** Docker might introduce some performance overhead, especially for I/O operations or if running on a non-native platform (e.g., x86 image on an ARM Mac via Rosetta 2).
-*   **Resource Limits:** By default, Docker containers have access to a portion of the host's resources. For computationally intensive tasks like SLAM, ensure Docker is configured with sufficient CPU and memory.
+*   **Camera Device Access:** The `--device=/dev/video0` flag is common for Linux. Docker Desktop on Windows and macOS often handles camera access more transparently if the application requests it and permissions are granted. You might not need this flag, or it might require different configuration through Docker Desktop settings.
+*   **GUI on macOS/Windows:** X11 forwarding (`-e DISPLAY -v /tmp/.X11-unix`) is primarily for Linux.
+    *   **macOS:** Requires XQuartz. You might need to set `DISPLAY` to `host.docker.internal:0` or similar and configure XQuartz to allow network connections.
+    *   **Windows:** Requires an X server like VcXsrv or can use WSLg if running Docker within WSL2.
+    *   For simplicity, you might run scripts without direct GUI visualization in Docker and save outputs (like point clouds) to the mounted `/app/data` to view them on your host system.
+*   **Performance:** Docker might introduce some performance overhead, especially for I/O operations or if running an x86_64 image on an ARM Mac via Rosetta 2 (though this `Dockerfile` aims for native ARM64 on M-series Macs).
+*   **Resource Limits:** Ensure Docker is configured with sufficient CPU and memory, especially for computationally intensive tasks like SLAM. Access Docker Desktop's "Resources" settings to adjust.
 
 ## Running the Application
 

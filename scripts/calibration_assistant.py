@@ -5,22 +5,34 @@ import yaml # Keep for loading/displaying if needed, but saving is delegated
 from pathlib import Path
 import argparse
 import time
+import sys # Added import
 
 # Attempt to import the refactored calibration function
 try:
+    # Try the original import first (works if PYTHONPATH is already set up, or if run as part of a larger package)
     from scripts.calibrate_camera import perform_calibration_from_images, DEFAULT_SQUARE_SIZE_MM as CC_DEFAULT_SQUARE_SIZE_MM
 except ImportError:
-    print("Error: Could not import 'perform_calibration_from_images' from 'scripts.calibrate_camera'.")
-    print("Please ensure 'calibrate_camera.py' is in the 'scripts' directory and your PYTHONPATH is set correctly.")
-    # Fallback or exit if the core function cannot be imported
-    # For simplicity, we'll let it fail later if the import doesn't work.
-    # A more robust solution might involve adding parent dir to sys.path if running as script.
-    # For now, assume it's run in an environment where 'scripts.calibrate_camera' is discoverable.
-    # Define a placeholder if import fails to prevent immediate crash, error will occur at call time.
-    def perform_calibration_from_images(*args, **kwargs):
-        print("CRITICAL ERROR: perform_calibration_from_images was not imported correctly!")
-        return None
-    CC_DEFAULT_SQUARE_SIZE_MM = 20.0 # Fallback default
+    # If the direct import fails, it might be because the script is run directly
+    # and the 'scripts' package is not correctly recognized.
+    # Add the parent directory of 'scripts' (project root) to sys.path
+    project_root = Path(__file__).resolve().parent.parent
+    if str(project_root) not in sys.path:
+        sys.path.insert(0, str(project_root))
+    
+    try:
+        # Retry the import
+        from scripts.calibrate_camera import perform_calibration_from_images, DEFAULT_SQUARE_SIZE_MM as CC_DEFAULT_SQUARE_SIZE_MM
+        print(f"Info: Added {project_root} to sys.path for local script execution.")
+    except ImportError as e:
+        print(f"Error: Could not import 'perform_calibration_from_images' from 'scripts.calibrate_camera' even after adjusting sys.path.")
+        print(f"Original error: {e}")
+        print("Please ensure 'calibrate_camera.py' is in the 'scripts' directory and your project structure is correct.")
+        
+        # Fallback or exit if the core function cannot be imported
+        def perform_calibration_from_images(*args, **kwargs):
+            print("CRITICAL ERROR: perform_calibration_from_images was not imported correctly due to persistent import issues!")
+            return None
+        CC_DEFAULT_SQUARE_SIZE_MM = 20.0 # Fallback default
 
 # Constants for the assistant
 ASSISTANT_CALIBRATION_IMAGES_DIR = "data/calibration_images" # Where assistant saves images
