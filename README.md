@@ -5,14 +5,14 @@ This project implements a real-time monocular Simultaneous Localization and Mapp
 ## Features
 
 *   **Monocular Camera Input:** Processes video feed from a standard webcam or video file.
-*   **MiDaS Depth Estimation:** Employs a pre-trained MiDaS model (from TensorFlow Hub) to estimate depth from monocular images.
+*   **MiDaS Depth Estimation (PyTorch Hub):** Employs pre-trained MiDaS v3.1 models (e.g., DPT_Hybrid, MiDaS_small) from PyTorch Hub (`intel-isl/MiDaS`) to estimate depth from monocular images.
 *   **ORB-based Visual Odometry (VO):** Tracks camera pose (rotation and translation) by detecting and matching ORB features between frames.
 *   **TSDF Dense Reconstruction:** Builds a dense 3D map of the environment using Open3D's `ScalableTSDFVolume`. This allows for robust fusion of depth data from multiple viewpoints.
 *   **Point Cloud & Mesh Generation:** Can extract a global point cloud or a 3D mesh from the TSDF volume.
 *   **Map Saving/Loading:**
     *   Saves the reconstructed point cloud map to a `.ply` file.
     *   Loads a `.ply` point cloud file for visualization (note: live TSDF reconstruction will restart if a map is loaded this way).
-*   **Camera Calibration:** Includes a script to calibrate the camera using checkerboard images, saving parameters to a YAML file.
+*   **Camera Calibration:** Includes scripts (`scripts/calibrate_camera.py` and `scripts/calibration_assistant.py`) to calibrate the camera using checkerboard images, saving parameters to a YAML file. The interactive `calibration_assistant.py` features live checkerboard detection, zone coverage guidance, and an auto-capture mode (toggle with 'a' key). Default internal corners for calibration set to 12x8.
 *   **Modular Design:** Code is organized into modules for camera handling, depth estimation, VO, and reconstruction.
 
 ## Project Structure
@@ -24,10 +24,11 @@ This project implements a real-time monocular Simultaneous Localization and Mapp
 │   ├── camera_calibration.yaml # Output of the calibration script (example provided)
 │   └── generated_map_tsdf.ply  # Example of a saved map (ignored by Git)
 ├── environment.yml           # Conda environment definition
-├── models/                   # (Currently unused, but could store local TF models if not using TF Hub)
+├── models/                   # Directory for user-saved models or other non-PyTorch Hub models. MiDaS models from PyTorch Hub are cached by PyTorch (see Setup).
 ├── README.md                 # This file
 ├── scripts/                  # Python scripts to run parts of or the full application
-│   ├── calibrate_camera.py   # Script for camera calibration
+│   ├── calibrate_camera.py   # Script for camera calibration (manual image placement)
+│   ├── calibration_assistant.py # Interactive script for camera calibration image collection & processing
 │   ├── run_pointcloud_generation.py # Main script for full SLAM & reconstruction
 │   ├── run_vo.py             # Script to run only Visual Odometry
 │   ├── view_camera.py        # Script to test camera input
@@ -81,6 +82,27 @@ This project implements a real-time monocular Simultaneous Localization and Mapp
     *   Ensure you have a webcam connected to your system if you intend to use live camera input.
     *   The default camera ID used is `0`. If you have multiple cameras, you might need to change this ID in the scripts (e.g., in `MonocularCamera(0)` calls).
 
+6.  **Pre-cache MiDaS Model Weights (PyTorch Hub):**
+    The system uses MiDaS v3.1 models (e.g., DPT_Hybrid, MiDaS_small) via PyTorch Hub (`intel-isl/MiDaS`). PyTorch Hub automatically handles the download and caching of these models (typically in `~/.cache/torch/hub/` on Linux/macOS or `C:\Users\<username>\.cache\torch\hub\` on Windows).
+
+    The main application scripts (`run_pointcloud_generation.py`, `view_depth.py`) will trigger this download on their first run if the selected model is not already cached. To pre-cache models, especially if you plan to work offline or want to ensure all desired models are available without delay during application startup, use the `scripts/download_midas_model.py` script.
+
+    **Usage of `scripts/download_midas_model.py`:**
+    ```bash
+    # Ensure the default 'hybrid' (DPT_Hybrid) MiDaS model is cached
+    python scripts/download_midas_model.py
+
+    # Ensure the 'small' (MiDaS_small) model is cached
+    python scripts/download_midas_model.py --model_type small
+
+    # Ensure the 'large_beit_512' (DPT_BEiT_L_512) model is cached
+    python scripts/download_midas_model.py --model_type large_beit_512
+
+    # Ensure all defined models ('small', 'hybrid', 'large_beit_512') are cached
+    python scripts/download_midas_model.py --model_type all
+    ```
+    Running this script helps populate the PyTorch Hub cache, making subsequent application runs faster if the models weren't already present. The local `models/` directory in the project is not used for caching these PyTorch Hub MiDaS models.
+
 ## Running with Docker
 
 This project includes a `Dockerfile` to build a containerized environment with all dependencies pre-installed.
@@ -121,29 +143,41 @@ The default command for the container is `python scripts/run_pointcloud_generati
     ```
     Note: X11 forwarding can have security implications and might require `xhost +local:docker` or similar commands on the host, depending on your X server configuration. This setup is primarily for Linux hosts. GUI forwarding on macOS or Windows with Docker Desktop might require different setups (e.g., using an XQuartz for macOS or VcXsrv for Windows).
 
-*   **Persisting Data (Maps and Models):**
-    To save generated maps or downloaded MiDaS models outside the container (so they are not lost when the container stops), use Docker volumes:
+*   **Persisting Data (Maps and PyTorch Hub Cache):**
+    *   **Maps & Calibration Data:** To save generated maps and camera calibration files outside the container (so they are not lost when the container stops), mount the local `data` directory:
+        ```bash
+        -v $(pwd)/data:/app/data
+        ```
+        Saved maps (e.g., `generated_map_tsdf.ply`) and `camera_calibration.yaml` will appear in your local `data` directory.
+    *   **PyTorch Hub Model Caching:** MiDaS models are downloaded by PyTorch Hub and cached within the container (typically in `/root/.cache/torch/hub`, as the container often runs as root). If you want to persist this cache across container *rebuilds* or different containers, you can mount your host's PyTorch Hub cache directory to the container's cache location. This is optional but can save re-downloading models frequently.
+        ```bash
+        # Example for Linux/macOS hosts:
+        -v ~/.cache/torch/hub:/root/.cache/torch/hub
+        ```
+        The local `models/` directory is not used by the PyTorch MiDaS implementation for caching.
+
+    **Example `docker run` with GUI, Camera, and Persistent Data/Cache:**
     ```bash
     docker run -it --rm \
         --device=/dev/video0 \
         -e DISPLAY=$DISPLAY \
         -v /tmp/.X11-unix:/tmp/.X11-unix \
         -v $(pwd)/data:/app/data \
-        -v $(pwd)/models:/app/models \
+        -v ~/.cache/torch/hub:/root/.cache/torch/hub \
         3d-slam-system
     ```
-    This mounts the local `./data` directory to `/app/data` in the container and `./models` to `/app/models`.
-    *   Saved maps (e.g., `generated_map_tsdf.ply`) will appear in your local `data` directory.
-    *   Downloaded MiDaS models will be cached in your local `models` directory, preventing re-downloads on subsequent runs.
 
 *   **Running Other Scripts:**
-    You can override the default CMD to run other scripts. For example, to run the camera calibration script:
+    You can override the default CMD to run other scripts. For example, to run the interactive calibration assistant:
     ```bash
     docker run -it --rm \
+        --device=/dev/video0 \
+        -e DISPLAY=$DISPLAY \
+        -v /tmp/.X11-unix:/tmp/.X11-unix \
         -v $(pwd)/data:/app/data \
-        3d-slam-system python scripts/calibrate_camera.py
+        3d-slam-system python scripts/calibration_assistant.py
     ```
-    (Ensure your `data/calibration_images/` directory is populated on the host for this example).
+    (Ensure your `data/calibration_images/` directory exists on the host if you plan to save images there via the assistant, though the assistant saves directly to the mounted `/app/data`).
 
 **Important Considerations for Docker:**
 
@@ -156,19 +190,26 @@ The default command for the container is `python scripts/run_pointcloud_generati
 
 ### 1. Camera Calibration (Recommended First Step)
 
-The accuracy of the SLAM system, especially visual odometry and 3D reconstruction, heavily depends on accurate camera intrinsic parameters.
+Accurate camera intrinsic parameters are crucial for SLAM. This project provides two scripts for calibration:
 
-*   **Prepare Checkerboard Pattern:**
-    *   Print or obtain a physical checkerboard pattern. The script defaults to `CHECKERBOARD_INTERNAL_CORNERS = (9, 6)` (meaning 10x7 squares) and `SQUARE_SIZE_MM = 20.0`.
-    *   If your checkerboard is different, update these constants at the top of `scripts/calibrate_camera.py`.
-*   **Capture Calibration Images:**
-    *   Take 15-20 clear images of the checkerboard from various angles and distances, ensuring the entire board is visible.
-    *   Place these images (e.g., `.png`, `.jpg`) into the `data/calibration_images/` directory. (Example images might be provided, but using your own camera's images is crucial).
-*   **Run Calibration Script:**
-    ```bash
-    python scripts/calibrate_camera.py
-    ```
-    The script will process the images and save the calibration results to `data/camera_calibration.yaml`. This file will be automatically used by other scripts.
+*   **`scripts/calibrate_camera.py` (Manual Image Placement):**
+    *   **Prepare Checkerboard Pattern:** Print or obtain a physical checkerboard. The script defaults to `CHECKERBOARD_INTERNAL_CORNERS = (12, 8)` (meaning 13x9 squares) and `SQUARE_SIZE_MM = 20.0`. If your checkerboard differs, update these constants in the script.
+    *   **Capture Calibration Images:** Take 15-20 clear images of the checkerboard from various angles and distances. Place these images (e.g., `.png`, `.jpg`) into the `data/calibration_images/` directory.
+    *   **Run Calibration Script:**
+        ```bash
+        python scripts/calibrate_camera.py
+        ```
+*   **`scripts/calibration_assistant.py` (Interactive Assistant):**
+    *   This script provides an interactive way to collect calibration images using a live camera feed.
+    *   It features live checkerboard detection, on-screen guidance for covering different zones of the camera view, and an auto-capture mode (toggle with the 'a' key) for convenience.
+    *   It also defaults to 12x8 internal checkerboard corners but allows you to input custom dimensions.
+    *   **Run Interactive Assistant:**
+        ```bash
+        python scripts/calibration_assistant.py
+        ```
+        Follow the on-screen prompts to capture images, which will be saved to `data/calibration_images/`. After collection, it proceeds to calibration.
+
+Both scripts save the calibration results to `data/camera_calibration.yaml`, which is then used by the main SLAM application.
 
 ### 2. Running the Full SLAM and 3D Reconstruction Pipeline
 
@@ -216,10 +257,11 @@ Key Python libraries used:
 
 *   **OpenCV (`cv2`):** For camera handling, image processing, feature detection/matching, and VO core algorithms.
 *   **Open3D (`open3d`):** For 3D data structures (point clouds, meshes), TSDF volume integration, and 3D visualization.
-*   **TensorFlow & TensorFlow Hub (`tensorflow`, `tensorflow_hub`):** For loading and running the MiDaS depth estimation model.
+*   **PyTorch (`torch`), TorchVision (`torchvision`), TIMM (`timm`):** Used for loading and running the MiDaS v3.1 depth estimation models from PyTorch Hub.
 *   **NumPy:** For numerical operations.
 *   **PyYAML:** For saving and loading camera calibration data.
 *   **Pandas:** For potential data manipulation tasks (though not heavily used in the core SLAM logic).
+*   **tqdm:** For displaying progress bars, especially during model downloads.
 
 All required Python packages are listed in `requirements.txt` and can be installed using pip.
 
