@@ -21,7 +21,7 @@ import yaml # Using YAML for saving data
 # It expects (patternSize.width, patternSize.height)
 # Number of internal corners:
 # e.g., for a 7x10 board (7 squares wide, 10 squares high), it has 6x9 internal corners.
-CHECKERBOARD_INTERNAL_CORNERS = (9, 6) # (cols-1, rows-1) or (width-1, height-1)
+CHECKERBOARD_INTERNAL_CORNERS = (12, 8) # (cols-1, rows-1) or (width-1, height-1)
 SQUARE_SIZE_MM = 20.0 # Physical size of a square in millimeters
 
 # --- Calibration Image Path ---
@@ -40,6 +40,9 @@ Camera Calibration Script
     The size of each square is set to {} mm.
     Adjust `CHECKERBOARD_INTERNAL_CORNERS` and `SQUARE_SIZE_MM` in the script if needed.
 
+    Default internal corners: {} (Width-1, Height-1)
+    Default square size: {} mm
+
 2.  Capture images of the checkerboard:
     *   Use a good quality camera.
     *   Capture about 15-20 images.
@@ -54,9 +57,11 @@ Camera Calibration Script
 4.  Run this script. It will process the images, perform calibration,
     and save the results to:
     `{}`
-""".format(CHECKERBOARD_INTERNAL_CORNERS,
-           CHECKERBOARD_INTERNAL_CORNERS[0] + 1, CHECKERBOARD_INTERNAL_CORNERS[1] + 1,
+""".format(CHECKERBOARD_INTERNAL_CORNERS, # This will be the new (12,8)
+           CHECKERBOARD_INTERNAL_CORNERS[0] + 1, CHECKERBOARD_INTERNAL_CORNERS[1] + 1, # This becomes 13x9
            SQUARE_SIZE_MM,
+           CHECKERBOARD_INTERNAL_CORNERS, # Explicitly state the default in the instructions
+           SQUARE_SIZE_MM,                # Explicitly state the default in the instructions
            os.path.abspath(CALIBRATION_IMAGE_DIR),
            os.path.abspath(CALIBRATION_DATA_FILE))
 

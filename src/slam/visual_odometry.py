@@ -199,10 +199,11 @@ class VisualOdometry:
                 #        expressed in the *previous* camera's coordinate system.
                 # distCoeffs is set to None as points are already undistorted.
                 num_inliers, R_rel, t_rel, rp_mask = cv2.recoverPose(E, 
-                                                                     points1=pts_curr_undistorted_inliers, 
-                                                                     points2=pts_prev_undistorted_inliers, 
-                                                                     cameraMatrix=self.K, 
-                                                                     distCoeffs=None # Points are undistorted
+                                                                     pts_curr_undistorted_inliers, 
+                                                                     pts_prev_undistorted_inliers, 
+                                                                     self.K, 
+                                                                     e_mask,  # Pass the mask from findEssentialMat
+                                                                     50.0     # distanceThresh value
                                                                     )
 
                 if num_inliers >= self.min_features_for_tracking: # Check if enough inliers for a stable pose

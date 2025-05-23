@@ -5,11 +5,12 @@ import yaml
 import glob
 from pathlib import Path
 import argparse
+import time # Added for auto-capture cooldown
 
 # Constants
 CALIBRATION_IMAGES_DIR = "data/calibration_images"
 CALIBRATION_RESULTS_FILE = "data/camera_calibration.yaml"
-DEFAULT_CHECKERBOARD_SIZE = (9, 6) # Common inner corners (width, height)
+DEFAULT_CHECKERBOARD_SIZE = (12, 8) # Common inner corners (width, height)
 MIN_IMAGES_FOR_CALIBRATION = 10
 
 def list_available_cameras(max_cameras_to_check=10):
@@ -103,8 +104,18 @@ def main_cli(cli_checkerboard_dims_override: tuple[int, int] | None = None):
     
     # Prepare directory for images
     prepare_calibration_image_dir(CALIBRATION_IMAGES_DIR) # Clear or create
-    
-    num_images_collected = collect_calibration_images(camera_id, CALIBRATION_IMAGES_DIR)
+
+    # Get checkerboard size BEFORE collecting images
+    if cli_checkerboard_dims_override:
+        checkerboard_dims = cli_checkerboard_dims_override
+        print(f"\nUsing checkerboard dimensions from command line: {checkerboard_dims}")
+    else:
+        # Prompt user for checkerboard dimensions if not provided via CLI
+        checkerboard_dims = get_checkerboard_dimensions(DEFAULT_CHECKERBOARD_SIZE)
+        # Confirmation of dimensions will be printed by get_checkerboard_dimensions or here
+        print(f"Using checkerboard dimensions: {checkerboard_dims} for image collection.")
+
+    num_images_collected = collect_calibration_images(camera_id, CALIBRATION_IMAGES_DIR, checkerboard_dims)
 
     if num_images_collected == 0: 
         print("\nNo images were collected. Cannot proceed to calibration.")
@@ -117,15 +128,8 @@ def main_cli(cli_checkerboard_dims_override: tuple[int, int] | None = None):
             print("Calibration aborted by user.")
             return
     
-    # Get checkerboard size
-    if cli_checkerboard_dims_override:
-        checkerboard_dims = cli_checkerboard_dims_override
-        print(f"\nUsing checkerboard dimensions from command line: {checkerboard_dims}")
-    else:
-        # Prompt user for checkerboard dimensions if not provided via CLI
-        checkerboard_dims = get_checkerboard_dimensions(DEFAULT_CHECKERBOARD_SIZE)
-        print(f"Using checkerboard dimensions: {checkerboard_dims}")
-
+    # Checkerboard dimensions are already obtained before image collection.
+    # The variable 'checkerboard_dims' holds the correct dimensions.
 
     print(f"\nRunning calibration with checkerboard size: {checkerboard_dims}...")
     calibration_data = run_calibration(CALIBRATION_IMAGES_DIR, checkerboard_dims)
@@ -485,13 +489,15 @@ def print_image_collection_instructions():
     input("Press Enter to start image collection...")
 
 
-def collect_calibration_images(camera_id: int, output_dir: str) -> int:
+def collect_calibration_images(camera_id: int, output_dir: str, checkerboard_dims: tuple[int, int]) -> int:
     """
-    Opens a camera feed and allows the user to capture images for calibration.
+    Opens a camera feed and allows the user to capture images for calibration,
+    showing live feedback of checkerboard detection.
 
     Args:
         camera_id (int): The ID of the camera to use.
         output_dir (str): Directory to save captured images.
+        checkerboard_dims (tuple[int, int]): (Width, Height) of inner checkerboard corners.
 
     Returns:
         int: The number of images successfully captured.
@@ -502,8 +508,57 @@ def collect_calibration_images(camera_id: int, output_dir: str) -> int:
         return 0
 
     img_count = 0
-    window_name = "Calibration Image Capture - Press 'c' to capture, 'q' to quit"
+    window_name = "Calibration Image Capture - Press 'c' to capture, 'q' to quit, 'a' for auto-capture"
     cv2.namedWindow(window_name, cv2.WINDOW_NORMAL) # Make it resizable
+
+    zone_names = ["Top-Left", "Top-Center", "Top-Right", 
+                  "Mid-Left", "Mid-Center", "Mid-Right", 
+                  "Bot-Left", "Bot-Center", "Bot-Right"]
+    covered_zones = set()
+
+    frame_height, frame_width = None, None # Will be set from first frame
+
+    auto_capture_mode = False
+    last_capture_time = 0.0
+    AUTO_CAPTURE_COOLDOWN_SECONDS = 2.0
+
+    def _save_calibration_image(current_frame: np.ndarray, current_img_count: int, 
+                                detected_corners, frame_w: int, frame_h: int) -> int:
+        """Helper function to save a calibration image and update zone coverage."""
+        nonlocal covered_zones # Allow modification of 'covered_zones' from outer scope
+        
+        img_filename = Path(output_dir) / f"calibration_image_{current_img_count + 1:02d}.png"
+        try:
+            cv2.imwrite(str(img_filename), current_frame)
+            current_img_count += 1
+            print(f"Captured image {current_img_count}: {img_filename}")
+
+            if detected_corners is not None and frame_w is not None and frame_h is not None:
+                centroid_x = np.mean(detected_corners[:,0,0])
+                centroid_y = np.mean(detected_corners[:,0,1])
+                
+                zone_width_px = frame_w / 3
+                zone_height_px = frame_h / 3
+                
+                col = int(centroid_x / zone_width_px)
+                row = int(centroid_y / zone_height_px)
+                
+                col = max(0, min(col, 2)) # Clamp col to 0-2
+                row = max(0, min(row, 2)) # Clamp row to 0-2
+                
+                zone_index = row * 3 + col
+                current_zone_name = zone_names[zone_index]
+                
+                if current_zone_name not in covered_zones:
+                    covered_zones.add(current_zone_name)
+                    print(f"Checkerboard captured in zone: {current_zone_name}. Zones covered: {len(covered_zones)}/{len(zone_names)}")
+                else:
+                    print(f"Checkerboard re-captured in zone: {current_zone_name}.")
+            return current_img_count
+        except Exception as e:
+            print(f"Error saving image {img_filename}: {e}")
+            return current_img_count
+
 
     while True:
         ret, frame = cap.read()
@@ -511,27 +566,81 @@ def collect_calibration_images(camera_id: int, output_dir: str) -> int:
             print("Error: Failed to grab frame from camera.")
             break
         
+        if frame_width is None or frame_height is None:
+            frame_height, frame_width = frame.shape[:2]
+
         display_frame = frame.copy()
-        # Display image count on the frame
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+        # Try to find checkerboard corners for live feedback
+        ret_corners, corners = cv2.findChessboardCorners(gray, checkerboard_dims, None)
+
+        if ret_corners:
+            cv2.drawChessboardCorners(display_frame, checkerboard_dims, corners, ret_corners)
+            cv2.putText(display_frame, "Checkerboard Found!", (10, 120), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        else:
+            cv2.putText(display_frame, "Checkerboard NOT Found", (10, 120), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+
+        # Display image count and controls
         cv2.putText(display_frame, f"Images captured: {img_count}", (10, 30), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-        cv2.putText(display_frame, "Press 'c' or SPACE to capture, 'q' to quit", (10, 60), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        cv2.putText(display_frame, "Controls: 'c' or SPACE (capture), 'a' (auto-capture), 'q' (quit)", (10, 60), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+        
+        # Display auto-capture status
+        auto_capture_status_text = f"Auto-Capture: {'ON' if auto_capture_mode else 'OFF'}"
+        auto_capture_color = (0, 255, 0) if auto_capture_mode else (0, 0, 255)
+        cv2.putText(display_frame, auto_capture_status_text, (10, 90), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, auto_capture_color, 2)
+
+
+        # Zone guidance text (adjust y-offset due to new auto-capture status line)
+        needed_zones = [name for name in zone_names if name not in covered_zones]
+        y_offset_for_guidance = 150 
+        if not needed_zones:
+            guidance_text = "All zones covered! Consider more varied angles or finish."
+            cv2.putText(display_frame, guidance_text, (10, y_offset_for_guidance), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+        else:
+            guidance_text_line1 = "Still need: " + ", ".join(needed_zones[:3])
+            if len(needed_zones) > 3: guidance_text_line1 += "..."
+            cv2.putText(display_frame, guidance_text_line1, (10, y_offset_for_guidance), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+            if len(needed_zones) > 3:
+                guidance_text_line2 = ", ".join(needed_zones[3:6])
+                if len(needed_zones) > 6: guidance_text_line2 += "..."
+                cv2.putText(display_frame, guidance_text_line2, (10, y_offset_for_guidance + 25), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
 
         cv2.imshow(window_name, display_frame)
         key = cv2.waitKey(1) & 0xFF
 
+        # Auto-capture logic
+        if auto_capture_mode and ret_corners:
+            current_time = time.time()
+            if (current_time - last_capture_time) > AUTO_CAPTURE_COOLDOWN_SECONDS:
+                print("Auto-capturing image...")
+                img_count = _save_calibration_image(frame, img_count, corners, frame_width, frame_height)
+                last_capture_time = current_time
+
+
         if key == ord('q'):
             print("Finished image collection.")
             break
+        elif key == ord('a'):
+            auto_capture_mode = not auto_capture_mode
+            status_msg = "ON" if auto_capture_mode else "OFF"
+            print(f"Auto-capture mode: {status_msg}")
+            if auto_capture_mode: # Reset timer when turning on to prevent immediate capture
+                last_capture_time = time.time()
         elif key == ord('c') or key == ord(' '): # Spacebar
-            img_filename = Path(output_dir) / f"calibration_image_{img_count + 1:02d}.png"
-            try:
-                cv2.imwrite(str(img_filename), frame)
-                img_count += 1
-                print(f"Captured image {img_count}: {img_filename}")
-            except Exception as e:
-                print(f"Error saving image {img_filename}: {e}")
+            # Pass 'corners' if available for zone update, else None
+            current_corners_for_save = corners if ret_corners else None
+            img_count = _save_calibration_image(frame, img_count, current_corners_for_save, frame_width, frame_height)
+            # Potentially reset auto-capture timer if manual capture occurs, or not, based on desired behavior.
+            # For now, manual capture doesn't affect auto-capture timer.
     
     cap.release()
     cv2.destroyAllWindows()
