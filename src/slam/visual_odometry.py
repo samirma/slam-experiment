@@ -57,7 +57,7 @@ class VisualOdometry:
 
         # State variables
         # cur_R represents R_world_to_camera (orientation of world in current camera frame)
-        self.cur_R: np.ndarray = np.eye(3, dtype=np.float32) 
+        self.cur_R: np.ndarray = np.eye(3, dtype=np.float32)
         # cur_t represents t_world_to_camera (position of world origin in current camera frame)
         self.cur_t: np.ndarray = np.zeros((3, 1), dtype=np.float32)
 
@@ -75,7 +75,7 @@ class VisualOdometry:
             frame_gray (numpy.ndarray): Grayscale input image (H, W).
 
         Returns:
-            tuple[list[cv2.KeyPoint], numpy.ndarray | None]: 
+            tuple[list[cv2.KeyPoint], numpy.ndarray | None]:
                 - keypoints (list[cv2.KeyPoint]): A list of detected keypoints.
                 - descriptors (numpy.ndarray | None): An array of ORB descriptors (Nx32 bytes),
                                                       or None if no keypoints are found.
@@ -98,19 +98,19 @@ class VisualOdometry:
         """
         if des_prev is None or des_curr is None or des_prev.shape[0] == 0 or des_curr.shape[0] == 0:
             return []
-        
+
         matches = self.matcher.match(des_prev, des_curr)
-        
+
         # Sort them in the order of their distance (lower distance is better).
         matches = sorted(matches, key=lambda x: x.distance)
-        
+
         # Optional: Further filtering if needed, e.g., ratio test if not using crossCheck.
         # For BFMatcher with crossCheck=True, matches are already quite good.
         # We can limit the number of matches to consider for performance if necessary.
         # For example, take top N_MATCHES:
         # N_MATCHES = 100
         # matches = matches[:N_MATCHES]
-        
+
         return matches
 
     def process_frame(self, frame_bgr: np.ndarray) -> tuple[np.ndarray, np.ndarray, list[cv2.KeyPoint], list[cv2.DMatch]]:
@@ -133,7 +133,7 @@ class VisualOdometry:
         frame_gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
         # TODO: Consider applying histogram equalization to frame_gray if lighting conditions vary significantly.
         # frame_gray = cv2.equalizeHist(frame_gray)
-        
+
         kps, des = self._extract_features(frame_gray)
 
         # For visualization purposes, always return current keypoints (even if tracking fails)
@@ -178,12 +178,12 @@ class VisualOdometry:
             # Input pts_prev/pts_curr are shape (N, 1, 2), output will also be (N, 1, 2)
             pts_prev_undistorted = cv2.undistortPoints(pts_prev, self.K, self.dist_coeffs, P=self.K)
             pts_curr_undistorted = cv2.undistortPoints(pts_curr, self.K, self.dist_coeffs, P=self.K)
-            
+
             # Estimate Essential Matrix (E) using undistorted points
             # E relates corresponding points in two images assuming pinhole camera model and K is known.
             # Points are expected as: current_points, previous_points
             # distCoeffs is not needed here as points are already undistorted.
-            E, e_mask = cv2.findEssentialMat(pts_curr_undistorted, pts_prev_undistorted, 
+            E, e_mask = cv2.findEssentialMat(pts_curr_undistorted, pts_prev_undistorted,
                                              cameraMatrix=self.K, # K is still needed for the Essential matrix properties
                                              method=cv2.RANSAC, prob=0.999, threshold=1.0)
 
@@ -192,19 +192,21 @@ class VisualOdometry:
                 # These points must be the same ones used in findEssentialMat (i.e., undistorted)
                 pts_curr_undistorted_inliers = pts_curr_undistorted[e_mask.ravel() == 1]
                 pts_prev_undistorted_inliers = pts_prev_undistorted[e_mask.ravel() == 1]
-                
+
                 # Recover relative pose (R_rel, t_rel) from E using undistorted inlier points.
                 # R_rel: Rotation from previous camera frame to current camera frame.
                 # t_rel: Translation of current camera origin relative to previous camera origin,
                 #        expressed in the *previous* camera's coordinate system.
                 # distCoeffs is set to None as points are already undistorted.
-                num_inliers, R_rel, t_rel, rp_mask = cv2.recoverPose(E, 
-                                                                     pts_curr_undistorted_inliers, 
-                                                                     pts_prev_undistorted_inliers, 
-                                                                     self.K, 
-                                                                     e_mask,  # Pass the mask from findEssentialMat
-                                                                     50.0     # distanceThresh value
-                                                                    )
+                num_inliers, R_rel, t_rel, rp_mask = cv2.recoverPose(
+                    E,                                  # Argument 0: Essential Matrix
+                    pts_curr_undistorted_inliers,       # Argument 1: Points from the current frame
+                    pts_prev_undistorted_inliers,       # Argument 2: Points from the previous frame
+                    self.K,                             # Argument 3: Camera Matrix
+                    self.dist_coeffs,                   # Argument 4: Distortion Coefficients (distCoeffs1)
+                    50.0                                # Argument 5: Distance Threshold
+                    # The output mask 'rp_mask' is handled by the function's return tuple.
+                )
 
                 if num_inliers >= self.min_features_for_tracking: # Check if enough inliers for a stable pose
                     # Update the cumulative camera pose (world-to-camera)
@@ -212,7 +214,7 @@ class VisualOdometry:
                     # self.cur_t is t_world_origin_in_prev_cam
                     # R_rel is R_prev_cam_to_curr_cam
                     # t_rel is t_curr_cam_origin_in_prev_cam (motion of current cam wrt prev, in prev cam's coord system)
-                    
+
                     # New world-to-camera rotation: R_w2curr = R_prev2curr @ R_w2prev
                     self.cur_R = R_rel @ self.cur_R
                     # New world-to-camera translation: t_w_origin_in_curr = R_prev2curr @ t_w_origin_in_prev - R_prev2curr @ t_prev_origin_in_curr
@@ -227,7 +229,7 @@ class VisualOdometry:
                     # self.cur_t is t_world_origin_in_camera (t_w_in_c)
                     # R_rel is R_prev_to_curr
                     # t_rel is t_curr_origin_in_prev_frame (motion of current camera wrt previous camera, in prev_cam coords)
-                    
+
                     # Update R_w2c: R_w2curr = R_prev2curr @ R_w2prev
                     # This means: self.cur_R = R_rel @ self.cur_R (This seems correct)
 
@@ -273,7 +275,7 @@ if __name__ == '__main__':
     dummy_K = np.array([[550, 0, img_w/2],
                         [0, 550, img_h/2],
                         [0, 0, 1]], dtype=np.float32)
-    
+
     class DummyCameraParams: # Minimal mock for CameraParams
         def get_K(self): return dummy_K
         def get_dist_coeffs(self): return np.zeros((4,1), dtype=np.float32)
@@ -318,6 +320,6 @@ if __name__ == '__main__':
         # cv2.waitKey(0)
         # cv2.destroyAllWindows()
         print("Matches visualization would require storing previous gray frame and kps in this example script.")
-    
+
     print("\nNote: The dummy frames used here are not ideal for robust VO testing.")
     print("Real-world sequences with distinct features and motion are needed for meaningful results.")

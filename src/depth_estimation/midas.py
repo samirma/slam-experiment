@@ -31,24 +31,31 @@ class MiDaSDepthEstimator:
             # Load the model
             self.model = torch.hub.load("intel-isl/MiDaS", self.midas_model_type, trust_repo=True)
             
-            # Determine and load the appropriate transform
-            # Based on typical naming conventions from intel-isl/MiDaS or general transforms.
-            transform_name_candidate = self.midas_model_type + "_transform" 
-            try:
-                print(f"Attempting to load specific transform: '{transform_name_candidate}'...")
-                self.transform = torch.hub.load("intel-isl/MiDaS", transform_name_candidate, trust_repo=True)
-                print(f"Successfully loaded transform: '{transform_name_candidate}'.")
-            except Exception:
-                print(f"Could not load specific transform '{transform_name_candidate}'. Falling back to general transforms.")
-                if "dpt" in self.midas_model_type.lower() or \
-                   "beit" in self.midas_model_type.lower() or \
-                   "swin" in self.midas_model_type.lower():
-                    print("Using 'dpt_transform' as fallback.")
-                    self.transform = torch.hub.load("intel-isl/MiDaS", "dpt_transform", trust_repo=True)
-                else: # For older/simpler models like MiDaS_small if it's not DPT based
-                    print("Using 'midas_transform' as fallback.")
-                    self.transform = torch.hub.load("intel-isl/MiDaS", "midas_transform", trust_repo=True)
-                print("Fallback transform loaded successfully.")
+            print("Loading MiDaS transforms module from PyTorch Hub...")
+            # Load the general 'transforms' entry point from the MiDaS hub
+            # This should return an object from which specific transforms can be accessed.
+            midas_transforms_module = torch.hub.load("intel-isl/MiDaS", "transforms", trust_repo=True)
+            print("MiDaS transforms module loaded successfully.")
+
+            # Select the appropriate transform based on the model type
+            if self.midas_model_type == "MiDaS_small":
+                print(f"Assigning 'small_transform' for model type '{self.midas_model_type}'.")
+                self.transform = midas_transforms_module.small_transform
+            elif "dpt" in self.midas_model_type.lower() or \
+                 "beit" in self.midas_model_type.lower() or \
+                 "swin" in self.midas_model_type.lower(): # Covers DPT_Hybrid, DPT_Large, DPT_BEiT, DPT_Swin etc.
+                print(f"Assigning 'dpt_transform' for DPT-like model type '{self.midas_model_type}'.")
+                self.transform = midas_transforms_module.dpt_transform
+            else:
+                # Fallback for any other model types not explicitly handled above.
+                # The original MiDaS paper had a generic transform.
+                print(f"Warning: Model type '{self.midas_model_type}' does not match 'MiDaS_small' or common DPT patterns. Using 'midas_transform' as a general fallback.")
+                self.transform = midas_transforms_module.midas_transform # Generic older transform
+
+            if self.transform is None: # Should not happen if transforms module loaded and has attributes
+                raise RuntimeError(f"Could not assign a valid transform for model type '{self.midas_model_type}'.")
+
+            print("Transform assigned successfully.")
 
             # Set device and move model to device
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
