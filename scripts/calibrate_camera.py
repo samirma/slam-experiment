@@ -1,195 +1,245 @@
 """
 Performs camera calibration using checkerboard images.
 
-This script guides the user through capturing checkerboard images,
-processes these images to find checkerboard corners, and then uses
-OpenCV's camera calibration functions to estimate the camera matrix (K)
-and distortion coefficients.
+This script can be run directly to calibrate a camera using images in a specified
+directory. Its core calibration logic is also designed to be reusable by other
+scripts, such as the calibration_assistant.py.
 
-The calibration results are saved to a YAML file (`data/camera_calibration.yaml`),
-which can then be loaded by the `CameraParams` class in `src/utils/camera_params.py`
-for use in other parts of the SLAM system.
+When run directly, it uses predefined constants for checkerboard dimensions,
+square size, image directory, and output file.
 """
 import cv2
 import numpy as np
 import os
-import glob
-import yaml # Using YAML for saving data
+import yaml
+from pathlib import Path # Using pathlib for path operations
 
-# --- Chessboard Parameters ---
-# Redefine CHECKERBOARD to be (cols, rows) to match cv2.findChessboardCorners behavior
-# It expects (patternSize.width, patternSize.height)
-# Number of internal corners:
-# e.g., for a 7x10 board (7 squares wide, 10 squares high), it has 6x9 internal corners.
-CHECKERBOARD_INTERNAL_CORNERS = (12, 8) # (cols-1, rows-1) or (width-1, height-1)
-SQUARE_SIZE_MM = 20.0 # Physical size of a square in millimeters
-
-# --- Calibration Image Path ---
-# Users should place their calibration images in this directory.
-CALIBRATION_IMAGE_DIR = "data/calibration_images/"
-CALIBRATION_DATA_FILE = "data/camera_calibration.yaml"
+# --- Default Configuration Constants (used when script is run directly) ---
+DEFAULT_CHECKERBOARD_INTERNAL_CORNERS = (12, 8) # (cols-1, rows-1) or (width-1, height-1)
+DEFAULT_SQUARE_SIZE_MM = 20.0 # Physical size of a square in millimeters
+DEFAULT_CALIBRATION_IMAGE_DIR = "data/calibration_images/"
+DEFAULT_CALIBRATION_DATA_FILE = "data/camera_calibration.yaml"
 
 # --- User Instructions ---
-USER_INSTRUCTIONS = """
+USER_INSTRUCTIONS_TEMPLATE = """
 Camera Calibration Script
 -------------------------
 
-1.  Prepare a checkerboard pattern with known dimensions.
-    The script is currently configured for a checkerboard with {} internal corners
-    (e.g., a board with {}x{} squares).
-    The size of each square is set to {} mm.
-    Adjust `CHECKERBOARD_INTERNAL_CORNERS` and `SQUARE_SIZE_MM` in the script if needed.
+This script calibrates a camera using checkerboard images.
 
-    Default internal corners: {} (Width-1, Height-1)
-    Default square size: {} mm
+1.  Prepare a checkerboard pattern.
+    - The script expects inner corner dimensions (width-1, height-1).
+    - The physical size of each square on the checkerboard is also needed.
+
+    When run directly, defaults are:
+    - Checkerboard Internal Corners: {} (Width-1, Height-1)
+    - Square Size: {} mm
 
 2.  Capture images of the checkerboard:
-    *   Use a good quality camera.
-    *   Capture about 15-20 images.
-    *   Show the checkerboard from various angles and distances.
-    *   Ensure the entire checkerboard is visible in the images.
-    *   Keep the checkerboard flat.
-    *   Good lighting is important. Avoid glare.
+    * Use a good quality camera.
+    * Capture about 15-20 images.
+    * Show the checkerboard from various angles and distances.
+    * Ensure the entire checkerboard is visible.
+    * Keep the checkerboard flat and well-lit. Avoid glare.
 
-3.  Place the captured images (e.g., .png, .jpg) into the directory:
-    `{}`
+3.  Place captured images (e.g., .png, .jpg) into an image directory.
+    Default directory when run directly: `{}`
 
-4.  Run this script. It will process the images, perform calibration,
-    and save the results to:
-    `{}`
-""".format(CHECKERBOARD_INTERNAL_CORNERS, # This will be the new (12,8)
-           CHECKERBOARD_INTERNAL_CORNERS[0] + 1, CHECKERBOARD_INTERNAL_CORNERS[1] + 1, # This becomes 13x9
-           SQUARE_SIZE_MM,
-           CHECKERBOARD_INTERNAL_CORNERS, # Explicitly state the default in the instructions
-           SQUARE_SIZE_MM,                # Explicitly state the default in the instructions
-           os.path.abspath(CALIBRATION_IMAGE_DIR),
-           os.path.abspath(CALIBRATION_DATA_FILE))
+4.  Run this script (or `calibration_assistant.py` for interactive capture).
+    The calibration results will be saved to a YAML file.
+    Default output file when run directly: `{}`
+"""
 
+def perform_calibration_from_images(
+    images_dir_path: str,
+    checkerboard_dims: tuple[int, int],
+    square_size_mm: float,
+    output_yaml_filepath: str
+) -> dict | None:
+    """
+    Performs camera calibration using collected images and saves the results.
 
-def calibrate_camera():
-    print(USER_INSTRUCTIONS)
+    Args:
+        images_dir_path (str): Directory containing calibration images.
+        checkerboard_dims (tuple[int, int]): (Width, Height) of inner checkerboard corners.
+        square_size_mm (float): The size of a checkerboard square in millimeters.
+        output_yaml_filepath (str): Path to save the calibration results YAML file.
 
-    # --- Prepare Object Points ---
-    # These are the 3D coordinates of the chessboard corners in its own coordinate system (Z=0).
-    objp = np.zeros((CHECKERBOARD_INTERNAL_CORNERS[0] * CHECKERBOARD_INTERNAL_CORNERS[1], 3), np.float32)
-    objp[:, :2] = np.mgrid[0:CHECKERBOARD_INTERNAL_CORNERS[0], 0:CHECKERBOARD_INTERNAL_CORNERS[1]].T.reshape(-1, 2) * SQUARE_SIZE_MM
-
-    # Arrays to store object points and image points from all images.
-    objpoints = []  # 3D points in real world space
-    imgpoints = []  # 2D points in image plane
+    Returns:
+        dict | None: A dictionary with calibration results ('camera_matrix', 'dist_coeffs',
+                      'reprojection_error', 'image_width', 'image_height', 'num_valid_images',
+                      'checkerboard_dims', 'square_size_mm')
+                      or None if calibration fails.
+    """
+    print(f"\nStarting calibration process...")
+    print(f"  Image directory: {images_dir_path}")
+    print(f"  Checkerboard inner corners: {checkerboard_dims}")
+    print(f"  Square size: {square_size_mm} mm")
+    print(f"  Output file: {output_yaml_filepath}")
 
     # Termination criteria for cornerSubPix
     criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
 
-    # --- Image Acquisition ---
-    if not os.path.exists(CALIBRATION_IMAGE_DIR):
-        print(f"Error: Calibration image directory not found: {CALIBRATION_IMAGE_DIR}")
-        print("Please create it and add calibration images.")
-        os.makedirs(CALIBRATION_IMAGE_DIR, exist_ok=True) # Create if not exist
-        return
+    # Prepare object points, like (0,0,0), (1,0,0), ..., (width-1,height-1,0)
+    # These are 3D points in the checkerboard's own coordinate system.
+    objp = np.zeros((checkerboard_dims[0] * checkerboard_dims[1], 3), np.float32)
+    objp[:, :2] = np.mgrid[0:checkerboard_dims[0], 0:checkerboard_dims[1]].T.reshape(-1, 2)
+    objp = objp * square_size_mm # Scale by the actual square size
 
-    image_paths = glob.glob(os.path.join(CALIBRATION_IMAGE_DIR, '*.png'))
-    image_paths.extend(glob.glob(os.path.join(CALIBRATION_IMAGE_DIR, '*.jpg')))
-    image_paths.extend(glob.glob(os.path.join(CALIBRATION_IMAGE_DIR, '*.jpeg')))
+    objpoints = []  # 3D points in real world space
+    imgpoints = []  # 2D points in image plane
 
+    image_dir = Path(images_dir_path)
+    if not image_dir.exists():
+        print(f"Error: Calibration image directory not found: {image_dir_path}")
+        return None
 
-    if not image_paths:
-        print(f"No images found in {CALIBRATION_IMAGE_DIR}. Please add calibration images.")
-        return
+    image_files = list(image_dir.glob("*.png")) + \
+                  list(image_dir.glob("*.jpg")) + \
+                  list(image_dir.glob("*.jpeg"))
 
-    print(f"\nFound {len(image_paths)} images for calibration.")
-    processed_images = 0
-    successful_detections = 0
+    if not image_files:
+        print(f"No .png, .jpg, or .jpeg images found in '{images_dir_path}'. Cannot calibrate.")
+        return None
 
-    # --- Corner Detection and Calibration ---
-    for fname in image_paths:
-        img = cv2.imread(fname)
+    print(f"\nFound {len(image_files)} images for calibration processing in '{images_dir_path}'.")
+
+    img_width, img_height = 0, 0
+    valid_images_processed = 0
+
+    for i, fname_path in enumerate(image_files):
+        img = cv2.imread(str(fname_path))
+        print(f"Processing image {i+1}/{len(image_files)}: {fname_path.name}...", end=" ")
+
         if img is None:
-            print(f"Warning: Could not read image {fname}. Skipping.")
+            print("Failed to load. Skipping.")
             continue
-        
+
+        current_h, current_w = img.shape[:2]
+        if valid_images_processed == 0:
+            img_width, img_height = current_w, current_h
+            print(f"Dimensions set to {img_width}x{img_height}.", end=" ")
+        elif (img_width != current_w) or (img_height != current_h):
+            print(f"Mismatched dimensions ({current_w}x{current_h} vs expected {img_width}x{img_height}). Skipping.")
+            continue
+
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        processed_images += 1
+        ret, corners = cv2.findChessboardCorners(gray, checkerboard_dims, None)
 
-        # Find the chessboard corners
-        # Flags like cv2.CALIB_CB_ADAPTIVE_THRESH + cv2.CALIB_CB_NORMALIZE_IMAGE can sometimes help.
-        ret, corners = cv2.findChessboardCorners(gray, CHECKERBOARD_INTERNAL_CORNERS, None)
-
-        # If found, add object points, image points (after refining them)
-        if ret == True:
-            successful_detections += 1
+        if ret:
+            print("Checkerboard found.", end=" ")
             objpoints.append(objp)
-
-            corners2 = cv2.cornerSubPix(gray, corners, (11, 11), (-1, -1), criteria)
-            imgpoints.append(corners2)
-
-            # Draw and display the corners (optional)
-            cv2.drawChessboardCorners(img, CHECKERBOARD_INTERNAL_CORNERS, corners2, ret)
-            # cv2.imshow(f'Chessboard Detections - {os.path.basename(fname)}', img)
-            # cv2.waitKey(500) # Display for 0.5 seconds
-            print(f"Successfully found corners in {os.path.basename(fname)}")
+            corners_subpix = cv2.cornerSubPix(gray, corners, (11, 11), (-1, -1), criteria)
+            imgpoints.append(corners_subpix)
+            valid_images_processed += 1
+            # Optional: Draw and display corners
+            # cv2.drawChessboardCorners(img, checkerboard_dims, corners_subpix, ret)
+            # cv2.imshow(f'Corners in {fname_path.name}', cv2.resize(img, (img_width//2, img_height//2)))
+            # cv2.waitKey(100)
         else:
-            print(f"Could not find corners in {os.path.basename(fname)}")
-
+            print("Checkerboard NOT found.")
     # cv2.destroyAllWindows()
 
-    if successful_detections < 10: # Need at least a few good views
-        print(f"\nCalibration failed: Only {successful_detections} images had successful corner detections.")
-        print("Need at least 10 good images with diverse views of the checkerboard.")
-        return
-
-    print(f"\nPerforming calibration with {successful_detections} successfully processed images...")
-
-    # --- Perform Calibration ---
-    # gray.shape[::-1] gives (width, height)
-    ret, mtx, dist, rvecs, tvecs = cv2.calibrateCamera(objpoints, imgpoints, gray.shape[::-1], None, None)
-
-    if not ret:
-        print("Calibration failed! cv2.calibrateCamera returned False.")
-        return
-
-    print("\n--- Calibration Results ---")
-    print("Camera Matrix (K):")
-    print(mtx)
-    print("\nDistortion Coefficients (k1, k2, p1, p2, k3):")
-    print(dist)
-
-    # --- Calculate Re-projection Error ---
-    mean_error = 0
-    for i in range(len(objpoints)):
-        imgpoints2, _ = cv2.projectPoints(objpoints[i], rvecs[i], tvecs[i], mtx, dist)
-        error = cv2.norm(imgpoints[i], imgpoints2, cv2.NORM_L2) / len(imgpoints2)
-        mean_error += error
+    if valid_images_processed == 0:
+        print("\nNo checkerboards found in any of the processed images. Calibration cannot proceed.")
+        return None
     
-    reprojection_error = mean_error / len(objpoints)
-    print(f"\nMean Re-projection Error: {reprojection_error}")
-    if reprojection_error > 1.0:
-        print("Warning: Re-projection error is high. Calibration might not be accurate.")
-        print("Consider retaking images, ensuring checkerboard flatness, diverse views, and correct parameters.")
-    else:
-        print("Re-projection error is acceptable.")
+    min_required_images = 5 # A more practical minimum for cv2.calibrateCamera
+    if valid_images_processed < min_required_images:
+        print(f"\nWarning: Checkerboards successfully processed in only {valid_images_processed} images.")
+        print(f"At least {min_required_images} images with detected checkerboards are recommended for a stable calibration.")
+        if input("Continue with calibration anyway? (y/n): ").lower() != 'y':
+            print("Calibration aborted by user due to too few valid images.")
+            return None
 
-
-    # --- Save Calibration Data ---
-    calibration_data = {
-        'camera_matrix': mtx.tolist(), # Convert numpy array to list for YAML serialization
-        'dist_coeffs': dist.tolist(),
-        'image_width': gray.shape[1], # width
-        'image_height': gray.shape[0], # height
-        'checkerboard_internal_corners': CHECKERBOARD_INTERNAL_CORNERS,
-        'square_size_mm': SQUARE_SIZE_MM,
-        'reprojection_error': reprojection_error
-    }
-
-    # Ensure data directory exists
-    os.makedirs(os.path.dirname(CALIBRATION_DATA_FILE), exist_ok=True)
-
+    print(f"\nCalibrating camera using {valid_images_processed} valid images (image size: {img_width}x{img_height})...")
     try:
-        with open(CALIBRATION_DATA_FILE, 'w') as f:
-            yaml.dump(calibration_data, f, default_flow_style=False)
-        print(f"\nCalibration data saved successfully to: {os.path.abspath(CALIBRATION_DATA_FILE)}")
+        ret_cal, mtx, dist, rvecs, tvecs = cv2.calibrateCamera(objpoints, imgpoints, (img_width, img_height), None, None)
+
+        if not ret_cal:
+            print("cv2.calibrateCamera returned False. Calibration failed.")
+            return None
+
+        mean_error = 0
+        for i in range(len(objpoints)):
+            imgpoints2, _ = cv2.projectPoints(objpoints[i], rvecs[i], tvecs[i], mtx, dist)
+            error = cv2.norm(imgpoints[i], imgpoints2, cv2.NORM_L2) / len(imgpoints2)
+            mean_error += error
+        reprojection_error = mean_error / len(objpoints)
+
+        calibration_data = {
+            "camera_matrix": mtx, # Keep as numpy array for now
+            "dist_coeffs": dist,  # Keep as numpy array for now
+            "reprojection_error": reprojection_error,
+            "image_width": img_width,
+            "image_height": img_height,
+            "num_valid_images": valid_images_processed,
+            "checkerboard_dims": checkerboard_dims, # Save the dimensions used
+            "square_size_mm": square_size_mm # Save the square size used
+        }
+
+        # Save to YAML
+        save_path_obj = Path(output_yaml_filepath)
+        save_path_obj.parent.mkdir(parents=True, exist_ok=True)
+
+        # Prepare data for YAML (convert numpy arrays to lists)
+        data_to_save_yaml = {
+            "image_width": calibration_data["image_width"],
+            "image_height": calibration_data["image_height"],
+            "camera_matrix": calibration_data["camera_matrix"].tolist(),
+            "dist_coeffs": calibration_data["dist_coeffs"].tolist(),
+            "reprojection_error": calibration_data["reprojection_error"],
+            "num_valid_images_for_calibration": calibration_data["num_valid_images"],
+            "square_size_mm": calibration_data["square_size_mm"]
+        }
+
+        with open(save_path_obj, 'w') as f:
+            yaml.dump(data_to_save_yaml, f, sort_keys=False, default_flow_style=None)
+        print(f"\nCalibration results successfully saved to '{output_yaml_filepath}'.")
+        print(f"  Camera Matrix (K):\n{calibration_data['camera_matrix']}")
+        print(f"  Distortion Coefficients:\n{calibration_data['dist_coeffs']}")
+        print(f"  Reprojection Error: {calibration_data['reprojection_error']:.4f}")
+
+        return calibration_data # Return the data with numpy arrays for potential direct use
+
+    except cv2.error as e:
+        print(f"OpenCV Error during cv2.calibrateCamera: {e}")
+        return None
     except Exception as e:
-        print(f"\nError saving calibration data: {e}")
+        print(f"An unexpected error occurred during calibration: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+def main():
+    """
+    Main function called when the script is run directly.
+    Uses default constants for calibration.
+    """
+    # Format instructions with current default values
+    formatted_instructions = USER_INSTRUCTIONS_TEMPLATE.format(
+        DEFAULT_CHECKERBOARD_INTERNAL_CORNERS,
+        DEFAULT_CHECKERBOARD_INTERNAL_CORNERS[0] + 1, DEFAULT_CHECKERBOARD_INTERNAL_CORNERS[1] + 1,
+        DEFAULT_SQUARE_SIZE_MM,
+        os.path.abspath(DEFAULT_CALIBRATION_IMAGE_DIR),
+        os.path.abspath(DEFAULT_CALIBRATION_DATA_FILE)
+    )
+    print(formatted_instructions)
+
+    # Ensure the default image directory exists
+    Path(DEFAULT_CALIBRATION_IMAGE_DIR).mkdir(parents=True, exist_ok=True)
+    
+    # Prompt user to confirm before proceeding
+    if input(f"Proceed with calibration using images from '{DEFAULT_CALIBRATION_IMAGE_DIR}' and default settings? (y/n): ").lower() != 'y':
+        print("Calibration aborted by user.")
+        return
+
+    perform_calibration_from_images(
+        images_dir_path=DEFAULT_CALIBRATION_IMAGE_DIR,
+        checkerboard_dims=DEFAULT_CHECKERBOARD_INTERNAL_CORNERS,
+        square_size_mm=DEFAULT_SQUARE_SIZE_MM,
+        output_yaml_filepath=DEFAULT_CALIBRATION_DATA_FILE
+    )
 
 if __name__ == '__main__':
-    calibrate_camera()
+    main()
