@@ -22,6 +22,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # libgl1-mesa-glx is already listed for OpenCV
     libegl1-mesa \
     libosmesa6 \
+    xterm \
+    vim \
     # Clean up
     && rm -rf /var/lib/apt/lists/*
 

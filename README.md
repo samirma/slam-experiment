@@ -126,6 +126,7 @@ The default command for the container is `python scripts/run_pointcloud_generati
 
 *   **General Run Command Structure:**
     ```bash
+    xhost +localhost
     docker run -it --rm \
         [--device=/dev/video0] \
         [-e DISPLAY=$DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix] \
@@ -157,6 +158,7 @@ The default command for the container is `python scripts/run_pointcloud_generati
         # macOS/Windows (Docker Desktop might handle camera/GUI differently - adapt if needed)
         # Basic command, assuming Docker Desktop handles camera/GUI:
         docker run -it --rm \
+            -e DISPLAY=host.docker.internal:0 \
             -v $(pwd)/data:/app/data \
             -v ~/.cache/torch/hub:/root/.cache/torch/hub \
             3d-slam-system python scripts/calibration_assistant.py
@@ -176,6 +178,7 @@ The default command for the container is `python scripts/run_pointcloud_generati
             
         # macOS/Windows (Docker Desktop - adapt if needed)
         docker run -it --rm \
+            -e DISPLAY=host.docker.internal:0 \
             -v $(pwd)/data:/app/data \
             -v ~/.cache/torch/hub:/root/.cache/torch/hub \
             3d-slam-system
