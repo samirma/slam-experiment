@@ -289,4 +289,3 @@ All required Python packages are listed in `requirements.txt` and can be install
 *   Integration with IMU data for improved robustness.
 *   UI for easier parameter tuning and control.
 
-```
