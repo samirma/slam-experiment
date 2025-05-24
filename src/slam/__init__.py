@@ -1,6 +1,6 @@
 # This file makes Python treat the `slam` directory as a package.
 
-# Expose the VisualOdometry class for easier importing
-from .visual_odometry import VisualOdometry
+# Expose the SLAMFrontend class for easier importing
+from .slam_frontend import SLAMFrontend
 
-__all__ = ['VisualOdometry']
+__all__ = ['SLAMFrontend']
