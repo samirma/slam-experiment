@@ -25,8 +25,8 @@ slam-experiment/
 * **Pose Estimation**: Estimates camera rotation and translation between two views using the 5-point algorithm for the Essential Matrix and RANSAC. The estimated pose is accumulated over frames.
 * **3D Triangulation**: Reconstructs 3D points from matched 2D keypoints and estimated poses.
 * **Live Feed**: Shows live webcam feed with undistorted images, detected keypoints, and feature matches.
-* **Real-time 3D Reconstruction Visualization**: Displays the triangulated 3D point cloud in a dedicated 3D window using OpenCV's Viz module (if available).
-* **Camera Pose Visualization**: Shows the estimated camera pose trajectory in the 3D window, including the current camera position and the initial world origin.
+* **Real-time 3D Reconstruction Visualization**: Displays the triangulated 3D point cloud in a dedicated 3D window using the Open3D library.
+* **Camera Pose Visualization**: Shows the estimated camera pose trajectory (represented by coordinate axes) in the Open3D window, including the current camera position and the initial world origin.
 
 ## Setup and Installation
 
@@ -59,8 +59,7 @@ Once the virtual environment is activated, install the required Python packages 
 ```bash
 pip install -r requirements.txt
 ```
-The primary dependencies are `numpy` and an OpenCV distribution.
-For full functionality, including 3D visualization, it is **highly recommended to install `opencv-contrib-python`** instead of `opencv-python` (headless) or `opencv-python-headless`. `opencv-contrib-python` includes the Viz module required for 3D rendering. If it's not available, the application will fall back to a simpler placeholder for 3D visualization.
+The primary dependencies are `numpy`, `opencv-python` (for core computer vision tasks), and `open3d` (for 3D visualization). The `requirements.txt` file has been updated to include `open3d`.
 
 ## Running the Application
 
@@ -101,18 +100,16 @@ python src/main.py
         *   "Live Feed with Keypoints": Shows the undistorted live video from the selected camera, with detected ORB keypoints overlaid.
         *   "Feature Matches": Displays matches between features from the current and previous frames.
     *   **3D Visualization Window ("3D Reconstruction")**:
-        *   If `opencv-contrib-python` (with Viz module) is installed and working, a 3D window will open.
-        *   This window displays:
-            *   A coordinate system widget representing the world origin.
-            *   A blue camera frustum representing the initial camera position (world origin).
-            *   A green camera frustum representing the current estimated pose of the camera, updated in real-time.
-            *   A white point cloud representing the triangulated 3D points from the scene.
-        *   You can typically interact with this window using the mouse (e.g., click and drag to rotate, scroll to zoom).
-        *   If the Viz module is unavailable, a "3D Visualization Placeholder" window will appear with a black image. 3D points and pose information will be printed to the console instead, along with a `TODO` message.
-    *   **Console Output**: Information about pose estimation success/failure, number of reconstructed points, and accumulated camera pose (if Viz is disabled) will be printed to the console.
+        *   An Open3D window titled "3D Reconstruction" will open to display the 3D scene.
+        *   This window shows:
+            *   A large coordinate system widget representing the world origin.
+            *   A smaller coordinate system widget representing the current estimated pose of the camera, updated in real-time.
+            *   A point cloud representing the triangulated 3D points from the scene.
+        *   You can interact with this 3D scene using standard Open3D mouse controls (e.g., left-click and drag to rotate, right-click and drag or scroll wheel to zoom, middle-click and drag to pan).
+    *   **Console Output**: Information about pose estimation success/failure and number of reconstructed points will be printed to the console.
 5.  **Exiting**:
-    *   Press **'q'** in any of the OpenCV display windows (Live Feed, Matches, Placeholder) to quit the main loop.
-    *   If the Viz 3D window is open, closing it will also terminate the application.
+    *   Press **'q'** in any of the OpenCV display windows (Live Feed, Matches) to quit the main loop.
+    *   Closing the Open3D "3D Reconstruction" window will also terminate the application.
 
 ## Key Files and Modules
 

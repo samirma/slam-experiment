@@ -13,6 +13,7 @@ from src.sfm import estimate_pose, triangulate_points # Added
 import cv2
 import numpy as np
 from src.camera_selection import select_camera_interactive # New import
+import open3d as o3d # New import for Open3D
 
 
 # CALIBRATION_FILE = os.path.join(CALIBRATION_IMAGE_DIR, "camera_params.npz") # No longer a single global file
@@ -130,61 +131,46 @@ def main():
     cv2.namedWindow("Live Feed with Keypoints")
     cv2.namedWindow("Feature Matches")
 
-    # --- 3D Visualization Setup ---
-    viz_enabled = False
-    viz_window = None
-    placeholder_img = np.zeros((480, 640, 3), dtype=np.uint8) # Define placeholder_img here for broader scope
+    # --- Open3D Visualization Setup ---
+    print("Initializing Open3D visualizer...")
+    vis = o3d.visualization.Visualizer()
+    vis.create_window(window_name="3D Reconstruction")
+
+    point_cloud_o3d = o3d.geometry.PointCloud()
+    vis.add_geometry(point_cloud_o3d)
+
+    world_origin_axes = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.5, origin=[0, 0, 0])
+    vis.add_geometry(world_origin_axes)
+
+    # Canonical camera axes model (at origin, aligned with XYZ)
+    canonical_camera_axes = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.3)
+    
+    # Create the visualizable camera axes object that will be updated
+    current_cam_vis_o3d = o3d.geometry.TriangleMesh()
+    current_cam_vis_o3d.vertices = canonical_camera_axes.vertices
+    current_cam_vis_o3d.triangles = canonical_camera_axes.triangles
+    current_cam_vis_o3d.compute_vertex_normals()
+    current_cam_vis_o3d.paint_uniform_color([0.1, 0.1, 0.7]) # Example color: dark blue
+    vis.add_geometry(current_cam_vis_o3d)
+
+    # Optional: Initial view control settings
+    view_control = vis.get_view_control()
+    view_control.set_zoom(0.8)
+    view_control.set_lookat([0, 0, 0]) # Look at the origin
+    view_control.set_up([0, -1, 0])    # OpenCV's Y is down, Open3D's Y is up. This aligns them.
+    view_control.set_front([0, 0, -1]) # Look along the negative Z axis
 
     # Accumulated pose of the 'previous' camera in the world (starts at origin)
     world_R_previous = np.eye(3, dtype=np.float64)
     world_t_previous = np.zeros((3, 1), dtype=np.float64)
 
     # Pose of the 'current' camera in the world, to be displayed
-    # This is initialized to the world origin and updated each frame where pose is valid
     display_R = np.eye(3, dtype=np.float64)
     display_t = np.zeros((3, 1), dtype=np.float64)
 
-    try:
-        import cv2.viz as viz
-        viz_window = viz.Viz3d("3D Reconstruction")
-        axis_widget = viz.WCoordinateSystem(scale=1.0) # Added scale for visibility
-        viz_window.showWidget("CoordinateSystem", axis_widget)
-
-        # Add a static camera widget for the world origin (first camera)
-        origin_cam_pose_affine = viz.Affine3d(np.eye(3, dtype=np.float32), np.zeros((3,1), dtype=np.float32))
-        origin_cam_widget = viz.WCameraPosition(0.5 * camera_matrix.astype(np.float32), scale=0.5, color=viz.Color.blue()) # Scale down intrinsic matrix if large
-        viz_window.showWidget("OriginCamera", origin_cam_widget, origin_cam_pose_affine)
-        
-        # Initial camera pose widget (will be updated)
-        # Ensure display_R and display_t are float32 for Affine3d
-        initial_cam_pose_affine = viz.Affine3d(display_R.astype(np.float32), display_t.astype(np.float32))
-        # Pass camera intrinsics (fx, fy, cx, cy) to WCameraPosition if available and scaled appropriately
-        # For simplicity, we can use a generic representation or scale down the actual K matrix
-        # Example: viz.WCameraPosition(0.5*K, scale=0.5) or viz.WCameraPosition(scale=0.5)
-        # Using camera_matrix (K) obtained from calibration, ensure it's float32
-        cam_widget = viz.WCameraPosition(0.5 * camera_matrix.astype(np.float32), scale=0.5, color=viz.Color.green())
-        viz_window.showWidget("CurrentCameraPose", cam_widget, initial_cam_pose_affine)
-
-        viz_enabled = True
-        print("OpenCV Viz module loaded successfully. 3D Visualization enabled.")
-    except ImportError:
-        print("OpenCV Viz module (cv2.viz) not found. Install opencv-contrib-python for 3D visualization.")
-        print("Falling back to placeholder 3D visualization.")
-        cv2.namedWindow("3D Visualization Placeholder")
-    except Exception as e:
-        print(f"Error initializing OpenCV Viz: {e}")
-        print("Falling back to placeholder 3D visualization.")
-        cv2.namedWindow("3D Visualization Placeholder")
-
-    # Initialize a variable to store the current camera pose affine transformation for Viz
-    current_camera_affine_viz = viz.Affine3d(display_R.astype(np.float32), display_t.astype(np.float32)) if viz_enabled else None
-
+    print("Open3D visualizer initialized.")
 
     while True:
-        if viz_enabled and viz_window and viz_window.wasStopped():
-            print("3D Visualization window was closed by user.")
-            break # Exit main loop if Viz window is closed
-
         ret, frame = cap.read()
         if not ret:
             print("Error: Can't receive frame (stream end?). Exiting feature tracking loop.")
@@ -244,15 +230,27 @@ def main():
                     display_R = prev_cam_R_world @ R_est
                     display_t = prev_cam_t_world + prev_cam_R_world @ t_est
 
-                    if viz_enabled and viz_window:
-                        # Update the current camera pose widget in Viz
-                        current_camera_affine_viz = viz.Affine3d(display_R.astype(np.float32), display_t.astype(np.float32))
-                        viz_window.setWidgetPose("CurrentCameraPose", current_camera_affine_viz)
-                    elif not viz_enabled:
-                        # Placeholder: Print accumulated pose
-                        rvec_display, _ = cv2.Rodrigues(display_R)
-                        print(f"DEBUG: Accumulated Pose (Current Cam in World): R_vec={rvec_display.flatten()}, t={display_t.flatten()}")
-                        # TODO: Visualize camera pose (display_R, display_t) in 3D window.
+                    # Update Open3D camera_axes_o3d pose using display_R, display_t
+                    if display_R is not None and display_t is not None:
+                        transform_matrix = np.eye(4)
+                        transform_matrix[:3, :3] = display_R
+                        transform_matrix[:3, 3] = display_t.squeeze()
+
+                        # Start with a fresh copy of the canonical axes
+                        temp_cam_axes = o3d.geometry.TriangleMesh()
+                        temp_cam_axes.vertices = canonical_camera_axes.vertices
+                        temp_cam_axes.triangles = canonical_camera_axes.triangles
+                        
+                        # Apply the transformation
+                        temp_cam_axes.transform(transform_matrix)
+                        
+                        # Update the vertices and triangles of the object already in the scene
+                        current_cam_vis_o3d.vertices = temp_cam_axes.vertices
+                        current_cam_vis_o3d.triangles = temp_cam_axes.triangles
+                        current_cam_vis_o3d.compute_vertex_normals()
+                        # current_cam_vis_o3d.paint_uniform_color([0.1, 0.1, 0.7]) # Already painted at init
+                        
+                        vis.update_geometry(current_cam_vis_o3d)
                     
                     # Define projection matrices for triangulation
                     # P1 is for the previous camera (N-1), in its own coordinate system [K|0]
@@ -269,24 +267,21 @@ def main():
                         # Transform points (which are relative to camera N-1) to world coordinates
                         # using the world pose of camera N-1 (prev_cam_R_world, prev_cam_t_world)
                         points_3d_world = (prev_cam_R_world @ points_3d_relative_to_prev_cam.T + prev_cam_t_world).T
+                        
+                        # Update Open3D point_cloud_o3d with points_3d_world
+                        o3d_points = o3d.utility.Vector3dVector(points_3d_world)
+                        point_cloud_o3d.points = o3d_points
+                        # Optional: Add colors (e.g., uniform gray if no other color info)
+                        # if not point_cloud_o3d.has_colors():
+                        #    point_cloud_o3d.paint_uniform_color([0.7, 0.7, 0.7])
+                        vis.update_geometry(point_cloud_o3d)
 
-                        if viz_enabled and viz_window:
-                            points_3d_world_viz = points_3d_world.astype(np.float32)
-                            cloud_widget = viz.WCloud(points_3d_world_viz, viz.Color.white())
-                            viz_window.showWidget("point_cloud", cloud_widget)
-                        elif not viz_enabled:
-                            print(f"DEBUG: World 3D points for visualization: {points_3d_world[:5]}")
-                            cv2.imshow("3D Visualization Placeholder", placeholder_img)
-                            # TODO: Implement 3D visualization here. OpenCV Viz was problematic.
                     else:
                         print("Triangulation failed or yielded no 3D points.")
-                        if viz_enabled and viz_window: 
-                            try:
-                                viz_window.removeWidget("point_cloud")
-                            except: 
-                                pass 
-                        elif not viz_enabled:
-                            cv2.imshow("3D Visualization Placeholder", placeholder_img) 
+                        # Keep last known point cloud, or clear it:
+                        # point_cloud_o3d.clear()
+                        # vis.update_geometry(point_cloud_o3d)
+                        pass # Explicitly doing nothing to keep last cloud
 
                     # Update world_R_previous and world_t_previous for the *next* iteration
                     # They become the pose of the current camera (N) in the world
@@ -296,34 +291,21 @@ def main():
                 else: # R_est is None or t_est is None (pose estimation failed)
                     print("Pose estimation failed for this frame pair.")
                     # Do not update world_R_previous, world_t_previous here, keep last good pose.
-                    # Also, display_R, display_t are not updated, so camera widget in Viz remains at last good pose.
-                    if viz_enabled and viz_window: 
-                        try:
-                            viz_window.removeWidget("point_cloud") # No new points to show
-                        except:
-                            pass
-                    elif not viz_enabled:
-                        cv2.imshow("3D Visualization Placeholder", placeholder_img)
+                    # Also, display_R, display_t are not updated, so current_cam_vis_o3d in Open3D remains at last good pose.
+                    # If pose estimation failed, we might not have new points or they might be unreliable.
+                    # Consider clearing point cloud or leaving it. For now, it's handled by points_3d_relative_to_prev_cam check.
+                    pass 
             else:
                 print(f"Not enough good matches for pose estimation (found {len(good_matches)}, need {MIN_MATCHES_FOR_POSE}).")
-            if viz_enabled and viz_window: # Clear previous cloud
-                try:
-                    viz_window.removeWidget("point_cloud")
-                except:
-                    pass
-            elif not viz_enabled:
-                cv2.imshow("3D Visualization Placeholder", placeholder_img)
+                # No new points, so decision to clear or keep existing cloud applies.
+                # For now, leave existing points.
+                pass
         else:
             # Clear the matches window if no previous descriptors or current descriptors
             cv2.imshow("Feature Matches", np.zeros((480, 640, 3), dtype=np.uint8))
-            if viz_enabled and viz_window: # Clear previous cloud
-                try:
-                    viz_window.removeWidget("point_cloud")
-                except:
-                    pass
-            elif not viz_enabled:
-                cv2.imshow("3D Visualization Placeholder", placeholder_img)
-
+            # No new points, so decision to clear or keep existing cloud applies.
+            # For now, leave existing points.
+            pass
 
         # Draw keypoints on the current undistorted color frame
         if current_keypoints:
@@ -339,20 +321,28 @@ def main():
         prev_descriptors = current_descriptors
         prev_undistorted_color_frame_for_drawing = undistorted_color_frame.copy()
 
-        if viz_enabled and viz_window:
-            viz_window.spinOnce(1, True) # Refresh Viz window
-
+        # Update Open3D visualizer
+        if not vis.poll_events(): # Process window events and check if closed
+            print("Open3D window was closed by user or events processing failed.")
+            break                 # Exit loop if window was closed
+        vis.update_renderer()     # Render the updated scene
+        
+        # Process OpenCV window events and check for 'q' key
         key = cv2.waitKey(1) & 0xFF
         if key == ord('q'):
-            print("Quitting feature tracking loop.")
+            print("User pressed 'q'. Quitting feature tracking loop.")
             break
+
 
     # Release resources
     cap.release()
-    if viz_enabled and viz_window:
-        viz_window.close() # Close Viz window
     cv2.destroyAllWindows()
     print("Feature tracking loop finished.")
+    
+    if vis:
+        print("Destroying Open3D window...")
+        vis.destroy_window()
+    print("Application finished.")
 
 
 if __name__ == "__main__":
