@@ -6,6 +6,7 @@ import os
 CHECKERBOARD_SIZE = (12, 8)  # (width, height) internal corners
 SQUARE_SIZE_MM = 20.0
 MAX_IMAGES = 15  # Maximum number of calibration images to capture
+AUTO_CAPTURE_INTERVAL_SECONDS = 2.0 # Interval between automatic captures
 
 # Directory to save calibration images (optional, but good for debugging)
 CALIBRATION_IMAGE_DIR = "calibration_data"
@@ -14,12 +15,12 @@ MIN_CALIBRATION_IMAGES = 5
 
 def capture_calibration_images():
     """
-    Captures images from the webcam for camera calibration.
+    Captures images from the webcam for camera calibration automatically.
 
-    Displays a live feed from the webcam. Pressing the spacebar triggers an
-    image capture if checkerboard corners are detected. Pressing 'q' quits
-    the capture process or signals calibration if max images are reached.
-    Pressing ESC quits immediately.
+    Displays a live feed from the webcam. Images are captured automatically
+    if checkerboard corners are detected and enough time has passed since
+    the last capture. Pressing 'q' quits the capture process or signals
+    calibration if max images are reached. Pressing ESC quits immediately.
     """
     if not os.path.exists(CALIBRATION_IMAGE_DIR):
         os.makedirs(CALIBRATION_IMAGE_DIR)
@@ -39,13 +40,15 @@ def capture_calibration_images():
         return [], [], None
 
     cv2.namedWindow("Calibration Feed")
-    print(f"Press SPACE to capture an image ({MAX_IMAGES} needed).")
+    print(f"Hold checkerboard steady. Images will be captured automatically when detected.")
+    print(f"{MAX_IMAGES} images are needed. Min {MIN_CALIBRATION_IMAGES} for calibration.")
     print("Press 'q' to quit (or proceed to calibrate if MAX_IMAGES reached).")
     print("Press ESC to discard and exit immediately.")
 
     img_count = 0
     capture_message = ""
-    last_capture_time = 0
+    last_ui_message_time = 0 # For UI messages like "Max images captured"
+    last_auto_capture_time = 0 # For timing automatic captures
     frame_size_for_return = None # Initialize frame_size to be returned
 
     while True:
@@ -61,23 +64,48 @@ def capture_calibration_images():
         # Find the chess board corners
         corners_found, corners = cv2.findChessboardCorners(gray, CHECKERBOARD_SIZE, None)
 
-        # If found, add object points, image points (after refining them)
+        current_tick_count = cv2.getTickCount()
+
+        # If found, draw corners and attempt automatic capture
         if corners_found:
-            # Refine corner locations
             criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
             corners_refined = cv2.cornerSubPix(gray, corners, (11, 11), (-1, -1), criteria)
-
-            # Draw and display the corners
             cv2.drawChessboardCorners(frame, CHECKERBOARD_SIZE, corners_refined, corners_found)
+
+            time_since_last_auto_capture = (current_tick_count - last_auto_capture_time) / cv2.getTickFrequency()
+
+            if len(imgpoints) < MAX_IMAGES and time_since_last_auto_capture > AUTO_CAPTURE_INTERVAL_SECONDS:
+                img_filename = os.path.join(CALIBRATION_IMAGE_DIR, f"calib_img_{len(imgpoints) + 1}.png")
+                cv2.imwrite(img_filename, gray) # Save the gray image
+                print(f"Saved {img_filename}")
+
+                objpoints.append(objp)
+                imgpoints.append(corners_refined)
+                img_count = len(imgpoints)
+                capture_message = f"Image {img_count}/{MAX_IMAGES} auto-captured."
+                last_ui_message_time = current_tick_count # Update time for this message
+                last_auto_capture_time = current_tick_count # Reset auto-capture timer
+                print(capture_message)
+
+                if img_count == MAX_IMAGES:
+                    capture_message = f"Max images ({MAX_IMAGES}) captured. Press 'q' or wait."
+                    print(capture_message)
+                    last_ui_message_time = cv2.getTickCount() # Keep message displayed
+            elif len(imgpoints) >= MAX_IMAGES:
+                # This condition is to ensure the "Max images" message can persist if needed
+                if not capture_message.startswith("Max images"): # Prevents spamming the same message
+                    capture_message = "Max images already captured. Press 'q' or ESC."
+                    last_ui_message_time = cv2.getTickCount()
         
         # Display image count
         text_to_display = f"Images: {len(imgpoints)} / {MAX_IMAGES}"
         cv2.putText(frame, text_to_display, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
-        if capture_message and (cv2.getTickCount() - last_capture_time) / cv2.getTickFrequency() < 2.0: # Display message for 2 secs
+        # Display capture_message (like "Image X captured" or "Max images")
+        if capture_message and (current_tick_count - last_ui_message_time) / cv2.getTickFrequency() < 3.0: # Display message for 3 secs
             cv2.putText(frame, capture_message, (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
         else:
-            capture_message = ""
+            capture_message = "" # Clear message after timeout
 
         cv2.imshow("Calibration Feed", frame)
         key = cv2.waitKey(1) & 0xFF
@@ -87,98 +115,79 @@ def capture_calibration_images():
             objpoints = []
             imgpoints = []
             break
-        elif key == 32:  # Spacebar
-            if corners_found:
-                if len(imgpoints) < MAX_IMAGES:
-                    # Save image (optional, for debugging or manual inspection)
-                    img_filename = os.path.join(CALIBRATION_IMAGE_DIR, f"calib_img_{len(imgpoints) + 1}.png")
-                    cv2.imwrite(img_filename, gray) # Save the gray image as corners are found on it
-                    print(f"Saved {img_filename}")
-
-                    objpoints.append(objp)
-                    imgpoints.append(corners_refined)
-                    img_count = len(imgpoints)
-                    capture_message = f"Image {img_count}/{MAX_IMAGES} captured."
-                    last_capture_time = cv2.getTickCount()
-                    print(capture_message)
-
-                    if img_count == MAX_IMAGES:
-                        capture_message = f"Max images ({MAX_IMAGES}) captured. Press 'q' to calibrate or ESC to discard."
-                        print(capture_message)
-                        last_capture_time = cv2.getTickCount() # Keep message displayed
-                else:
-                    capture_message = "Max images already captured. Press 'q' or ESC."
-                    last_capture_time = cv2.getTickCount()
-            else:
-                capture_message = "No checkerboard found. Try different angles."
-                last_capture_time = cv2.getTickCount()
-
         elif key == 113:  # 'q' key
-            if len(imgpoints) >= MAX_IMAGES:
-                print("'q' pressed with max images. Proceeding to calibration (conceptually).")
-                break 
+            if len(imgpoints) >= MIN_CALIBRATION_IMAGES:
+                print(f"'q' pressed with {len(imgpoints)} images. Proceeding to calibration.")
+                break
+            elif len(imgpoints) >= MAX_IMAGES: # Should be caught by above, but as safety
+                print("'q' pressed with max images. Proceeding to calibration.")
+                break
             else:
-                print(f"'q' pressed before capturing {MAX_IMAGES} images. Exiting capture mode.")
-                # Optionally, clear points if quitting means discarding partial progress
-                # objpoints = [] 
-                # imgpoints = []
+                print(f"'q' pressed with only {len(imgpoints)} images (min {MIN_CALIBRATION_IMAGES} needed). Exiting capture mode without calibrating.")
+                objpoints = [] # Discard points if not enough for calibration when quitting
+                imgpoints = []
                 break
         
-        # Check if max images captured and then user pressed 'q' implicitly by loop condition
-        if len(imgpoints) >= MAX_IMAGES and key == 113: # Already handled above, but as a safety
-             break
+        # Automatically proceed if MAX_IMAGES captured and some time passed (e.g. 5s) to allow 'q' or 'ESC'
+        if len(imgpoints) >= MAX_IMAGES and \
+           (current_tick_count - last_auto_capture_time) / cv2.getTickFrequency() > 5.0: # Wait 5s after last auto-capture at max
+            if key != 27 and key != 113: # if user hasn't already pressed ESC or q
+                print(f"Reached {MAX_IMAGES} images and timeout. Proceeding to calibration automatically.")
+                break
 
 
     cap.release()
     cv2.destroyAllWindows()
     
-    if len(imgpoints) < MAX_IMAGES and key != 27: # if not ESC and not enough images
-        print(f"Warning: Captured only {len(imgpoints)} out of {MAX_IMAGES} required images.")
-        # Decide if partial data should be returned or cleared
-        # return [], [] # Option: clear if not enough
+    if len(objpoints) == 0 and len(imgpoints) == 0 and key != 27 : # If q was pressed early with no images.
+        print("No calibration images were successfully captured or kept.")
+    elif key == 27: # ESC was pressed
+        print("Calibration discarded by user.")
+        # objpoints and imgpoints are already cleared
+    elif len(imgpoints) < MIN_CALIBRATION_IMAGES:
+        print(f"Warning: Captured only {len(imgpoints)} images. Minimum {MIN_CALIBRATION_IMAGES} are required for calibration. Discarding.")
+        objpoints = []
+        imgpoints = []
 
-    if not imgpoints: # if imgpoints is empty (either due to ESC or quitting early)
-        print("No calibration images were successfully captured.")
 
     return objpoints, imgpoints, frame_size_for_return
 
 if __name__ == '__main__':
-    # This is for testing purposes
-    # capture_calibration_images now also returns frame_size
-    
     objpoints, imgpoints, frame_size_from_capture = capture_calibration_images()
 
-    # Use frame_size_from_capture if available, otherwise fallback
     if frame_size_from_capture:
         print(f"Frame size obtained from capture: {frame_size_from_capture}")
     else:
-        # Fallback if frame_size_from_capture is None (e.g., no frames processed)
-        print("Frame size not obtained from capture, using default (640, 480) for test calibration.")
-        frame_size_from_capture = (640, 480) # Default for testing if none came back
+        if objpoints and imgpoints : # If points exist but frame size somehow None
+             print("Warning: Frame size not obtained from capture, but points exist. Calibration might fail.")
+        else: # No points, no frame size (e.g. early exit)
+            print("Frame size not obtained from capture, as no valid image data was processed.")
+        # Fallback for testing if absolutely necessary, but calibrate_camera will likely fail if frame_size is wrong
+        # frame_size_from_capture = (640, 480) 
 
-    if objpoints and imgpoints and len(imgpoints) >= MIN_CALIBRATION_IMAGES:
+    if objpoints and imgpoints and len(imgpoints) >= MIN_CALIBRATION_IMAGES and frame_size_from_capture: #
         print(f"\nCaptured {len(imgpoints)} image sets.")
         print(f"Attempting to calibrate camera using frame size: {frame_size_from_capture}...")
-        # Note: calibrate_camera now returns reprojection_error as the third value
         camera_matrix, dist_coeffs, reprojection_error = calibrate_camera(objpoints, imgpoints, frame_size_from_capture)
         if camera_matrix is not None and dist_coeffs is not None:
             print("\nCalibration successful.")
             
-            # Save the calibration data
             calibration_file = os.path.join(CALIBRATION_IMAGE_DIR, "camera_params.npz")
             save_calibration_data(calibration_file, camera_matrix, dist_coeffs, frame_size_from_capture, reprojection_error)
             
-            # Attempt to load it back (for testing)
             print("\nAttempting to load calibration data back...")
             loaded_mtx, loaded_dist, loaded_fsize, loaded_r_error = load_calibration_data(calibration_file)
             if loaded_mtx is not None:
                 print("Successfully loaded and verified saved data (see printed values above).")
         else:
-            print("\nCalibration failed or was not performed due to insufficient data.")
-    elif objpoints and imgpoints: # Captured some, but less than MIN_CALIBRATION_IMAGES
-        print(f"\nCaptured {len(imgpoints)} image sets, but need at least {MIN_CALIBRATION_IMAGES} for calibration.")
+            print("\nCalibration failed or was not performed due to insufficient data or missing frame size.")
+    elif objpoints and imgpoints : # Captured some, but less than MIN_CALIBRATION_IMAGES or frame_size missing
+        if not frame_size_from_capture:
+            print(f"\nCaptured {len(imgpoints)} image sets, but frame size is missing. Cannot calibrate.")
+        else: # frame_size is present, but not enough images
+            print(f"\nCaptured {len(imgpoints)} image sets, but need at least {MIN_CALIBRATION_IMAGES} for calibration.")
     else:
-        print("\nCalibration process was exited or no images were captured. Cannot calibrate.")
+        print("\nCalibration process was exited or no valid images were captured. Cannot calibrate.")
 
 
 def calibrate_camera(objpoints, imgpoints, frame_size):
@@ -198,9 +207,9 @@ def calibrate_camera(objpoints, imgpoints, frame_size):
         print("Error: Object points or image points list is empty. Cannot calibrate.")
         return None, None, None
 
-    if len(imgpoints) < MIN_CALIBRATION_IMAGES:
+    if len(imgpoints) < MIN_CALIBRATION_IMAGES: #
         print(f"Error: Insufficient number of calibration images. "
-              f"Got {len(imgpoints)}, need at least {MIN_CALIBRATION_IMAGES}. Cannot calibrate.")
+              f"Got {len(imgpoints)}, need at least {MIN_CALIBRATION_IMAGES}. Cannot calibrate.") #
         return None, None, None
     
     if frame_size is None or not (isinstance(frame_size, tuple) and len(frame_size) == 2):
@@ -209,7 +218,6 @@ def calibrate_camera(objpoints, imgpoints, frame_size):
 
     print(f"Starting calibration with {len(imgpoints)} images and frame size: {frame_size}...")
 
-    # cv2.calibrateCamera returns: ret, camera_matrix, dist_coeffs, rvecs, tvecs
     ret, camera_matrix, dist_coeffs, rvecs, tvecs = cv2.calibrateCamera(
         objpoints, imgpoints, frame_size, None, None
     )
@@ -219,7 +227,6 @@ def calibrate_camera(objpoints, imgpoints, frame_size):
         print("Camera Matrix:\n", camera_matrix)
         print("\nDistortion Coefficients:\n", dist_coeffs)
 
-        # Calculate and print reprojection error
         total_error = 0
         for i in range(len(objpoints)):
             projected_imgpoints, _ = cv2.projectPoints(
@@ -249,7 +256,6 @@ def save_calibration_data(filename, camera_matrix, dist_coeffs, frame_size, repr
         reprojection_error (float): The mean reprojection error.
     """
     try:
-        # Ensure the directory exists
         directory = os.path.dirname(filename)
         if directory and not os.path.exists(directory):
             os.makedirs(directory)
@@ -258,7 +264,7 @@ def save_calibration_data(filename, camera_matrix, dist_coeffs, frame_size, repr
         np.savez(filename, 
                  camera_matrix=camera_matrix, 
                  dist_coeffs=dist_coeffs,
-                 frame_size=np.array(frame_size), # Ensure frame_size is an ndarray for saving
+                 frame_size=np.array(frame_size), 
                  reprojection_error=reprojection_error)
         print(f"Calibration data saved to {filename}")
     except Exception as e:
@@ -284,9 +290,8 @@ def load_calibration_data(filename):
         data = np.load(filename)
         camera_matrix = data['camera_matrix']
         dist_coeffs = data['dist_coeffs']
-        # frame_size was saved as np.array, convert back to tuple if needed by other functions
         frame_size = tuple(data['frame_size']) 
-        reprojection_error = data['reprojection_error'].item() # .item() if it's a 0-dim array
+        reprojection_error = data['reprojection_error'].item() 
 
         print(f"Calibration data loaded from {filename}")
         print("Camera Matrix:\n", camera_matrix)
