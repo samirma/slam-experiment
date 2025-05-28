@@ -62,4 +62,4 @@ htmlcov/
 # Ignore contents of the 'models/' directory where MiDaS models are cached.
 models/
 
-data/
+calibration_data/
