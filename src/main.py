@@ -12,35 +12,52 @@ from src.feature_utils import detect_features, match_features
 from src.sfm import estimate_pose, triangulate_points # Added
 import cv2
 import numpy as np
+from src.camera_selection import select_camera_interactive # New import
 
 
-CALIBRATION_FILE = os.path.join(CALIBRATION_IMAGE_DIR, "camera_params.npz")
+# CALIBRATION_FILE = os.path.join(CALIBRATION_IMAGE_DIR, "camera_params.npz") # No longer a single global file
 MIN_MATCHES_FOR_POSE = 10 # Added constant
+
+# Removed list_available_cameras function
 
 def main():
     """
     Main function to manage camera calibration workflow.
     """
+    # --- Camera Selection ---
+    selected_camera_index = select_camera_interactive()
+
+    if selected_camera_index is None:
+        print("No camera selected or camera selection failed. Exiting application.")
+        return
+    
+    # This print message is now handled within select_camera_interactive
+    # print(f"Selected camera index: {selected_camera_index}") 
+
     camera_matrix = None
     dist_coeffs = None
     frame_size = None # To store the frame size used for calibration
 
-    print(f"Attempting to load calibration data from: {CALIBRATION_FILE}")
-    # Attempt to load existing calibration data
-    loaded_mtx, loaded_dist, loaded_fsize, loaded_r_error = load_calibration_data(CALIBRATION_FILE)
+    # Construct the expected calibration filename for the selected camera for user info
+    # The actual loading relies on passing selected_camera_index to load_calibration_data
+    expected_calibration_file = os.path.join(CALIBRATION_IMAGE_DIR, f"camera_params_idx{selected_camera_index}.npz")
+    print(f"Using camera with index: {selected_camera_index}. Expecting calibration file: {expected_calibration_file}")
+    
+    # Attempt to load existing calibration data using selected_camera_index
+    loaded_mtx, loaded_dist, loaded_fsize, loaded_r_error = load_calibration_data(camera_index=selected_camera_index)
 
     if loaded_mtx is not None and loaded_dist is not None and loaded_fsize is not None:
-        print("Using existing calibration data.")
+        print(f"Using existing calibration data for camera index {selected_camera_index}.")
         camera_matrix = loaded_mtx
         dist_coeffs = loaded_dist
         frame_size = loaded_fsize # Store the frame size
         print(f"  Reprojection error from loaded data: {loaded_r_error:.4f}")
     else:
-        print("No existing calibration data found or failed to load. Starting new calibration process.")
+        print(f"No existing calibration data found for camera index {selected_camera_index} or failed to load. Starting new calibration process.")
         
-        # Call capture_calibration_images()
+        # Call capture_calibration_images() with selected_camera_index
         # This now returns objpoints, imgpoints, frame_size_from_capture
-        objpoints, imgpoints, frame_size_from_capture = capture_calibration_images()
+        objpoints, imgpoints, frame_size_from_capture = capture_calibration_images(camera_index=selected_camera_index)
 
         if frame_size_from_capture is None and objpoints and imgpoints:
             # This case should ideally not happen if capture_calibration_images always returns a frame_size
@@ -64,9 +81,9 @@ def main():
                     dist_coeffs = new_dist
                     frame_size = frame_size_from_capture # Store the frame size used
 
-                    # Save the new calibration data
-                    print(f"Saving new calibration data to {CALIBRATION_FILE}...")
-                    save_calibration_data(CALIBRATION_FILE, camera_matrix, dist_coeffs, frame_size, reprojection_error)
+                    # Save the new calibration data using selected_camera_index
+                    print(f"Saving new calibration data for camera index {selected_camera_index}...")
+                    save_calibration_data(camera_matrix, dist_coeffs, frame_size, reprojection_error, camera_index=selected_camera_index)
                 else:
                     print("Calibration failed. Using default/no calibration.")
                     # camera_matrix, dist_coeffs remain None
@@ -105,15 +122,69 @@ def main():
 
     orb_detector = cv2.ORB_create() # Initialize ORB detector once
 
-    cap = cv2.VideoCapture(0)
+    cap = cv2.VideoCapture(selected_camera_index) # Use selected camera
     if not cap.isOpened():
-        print("Error: Could not open webcam for feature tracking.")
+        print(f"Error: Could not open webcam with index {selected_camera_index} for feature tracking.")
         return
 
     cv2.namedWindow("Live Feed with Keypoints")
     cv2.namedWindow("Feature Matches")
 
+    # --- 3D Visualization Setup ---
+    viz_enabled = False
+    viz_window = None
+    placeholder_img = np.zeros((480, 640, 3), dtype=np.uint8) # Define placeholder_img here for broader scope
+
+    # Accumulated pose of the 'previous' camera in the world (starts at origin)
+    world_R_previous = np.eye(3, dtype=np.float64)
+    world_t_previous = np.zeros((3, 1), dtype=np.float64)
+
+    # Pose of the 'current' camera in the world, to be displayed
+    # This is initialized to the world origin and updated each frame where pose is valid
+    display_R = np.eye(3, dtype=np.float64)
+    display_t = np.zeros((3, 1), dtype=np.float64)
+
+    try:
+        import cv2.viz as viz
+        viz_window = viz.Viz3d("3D Reconstruction")
+        axis_widget = viz.WCoordinateSystem(scale=1.0) # Added scale for visibility
+        viz_window.showWidget("CoordinateSystem", axis_widget)
+
+        # Add a static camera widget for the world origin (first camera)
+        origin_cam_pose_affine = viz.Affine3d(np.eye(3, dtype=np.float32), np.zeros((3,1), dtype=np.float32))
+        origin_cam_widget = viz.WCameraPosition(0.5 * camera_matrix.astype(np.float32), scale=0.5, color=viz.Color.blue()) # Scale down intrinsic matrix if large
+        viz_window.showWidget("OriginCamera", origin_cam_widget, origin_cam_pose_affine)
+        
+        # Initial camera pose widget (will be updated)
+        # Ensure display_R and display_t are float32 for Affine3d
+        initial_cam_pose_affine = viz.Affine3d(display_R.astype(np.float32), display_t.astype(np.float32))
+        # Pass camera intrinsics (fx, fy, cx, cy) to WCameraPosition if available and scaled appropriately
+        # For simplicity, we can use a generic representation or scale down the actual K matrix
+        # Example: viz.WCameraPosition(0.5*K, scale=0.5) or viz.WCameraPosition(scale=0.5)
+        # Using camera_matrix (K) obtained from calibration, ensure it's float32
+        cam_widget = viz.WCameraPosition(0.5 * camera_matrix.astype(np.float32), scale=0.5, color=viz.Color.green())
+        viz_window.showWidget("CurrentCameraPose", cam_widget, initial_cam_pose_affine)
+
+        viz_enabled = True
+        print("OpenCV Viz module loaded successfully. 3D Visualization enabled.")
+    except ImportError:
+        print("OpenCV Viz module (cv2.viz) not found. Install opencv-contrib-python for 3D visualization.")
+        print("Falling back to placeholder 3D visualization.")
+        cv2.namedWindow("3D Visualization Placeholder")
+    except Exception as e:
+        print(f"Error initializing OpenCV Viz: {e}")
+        print("Falling back to placeholder 3D visualization.")
+        cv2.namedWindow("3D Visualization Placeholder")
+
+    # Initialize a variable to store the current camera pose affine transformation for Viz
+    current_camera_affine_viz = viz.Affine3d(display_R.astype(np.float32), display_t.astype(np.float32)) if viz_enabled else None
+
+
     while True:
+        if viz_enabled and viz_window and viz_window.wasStopped():
+            print("3D Visualization window was closed by user.")
+            break # Exit main loop if Viz window is closed
+
         ret, frame = cap.read()
         if not ret:
             print("Error: Can't receive frame (stream end?). Exiting feature tracking loop.")
@@ -163,26 +234,95 @@ def main():
                 if R_est is not None and t_est is not None:
                     print("Pose estimated successfully for this frame pair.")
                     
-                    # Define projection matrices
+                    # Store the pose of the previous camera (N-1) in the world, used for transforming points_3d
+                    prev_cam_R_world = world_R_previous.copy()
+                    prev_cam_t_world = world_t_previous.copy()
+                    
+                    # Accumulate pose: T_world_current = T_world_previous * T_previous_current
+                    # R_est, t_est is T_previous_current (pose of current cam N relative to previous cam N-1)
+                    # display_R, display_t will be T_world_current (pose of current cam N in world)
+                    display_R = prev_cam_R_world @ R_est
+                    display_t = prev_cam_t_world + prev_cam_R_world @ t_est
+
+                    if viz_enabled and viz_window:
+                        # Update the current camera pose widget in Viz
+                        current_camera_affine_viz = viz.Affine3d(display_R.astype(np.float32), display_t.astype(np.float32))
+                        viz_window.setWidgetPose("CurrentCameraPose", current_camera_affine_viz)
+                    elif not viz_enabled:
+                        # Placeholder: Print accumulated pose
+                        rvec_display, _ = cv2.Rodrigues(display_R)
+                        print(f"DEBUG: Accumulated Pose (Current Cam in World): R_vec={rvec_display.flatten()}, t={display_t.flatten()}")
+                        # TODO: Visualize camera pose (display_R, display_t) in 3D window.
+                    
+                    # Define projection matrices for triangulation
+                    # P1 is for the previous camera (N-1), in its own coordinate system [K|0]
+                    # P2 is for the current camera (N), relative to camera (N-1) K@[R_est|t_est]
                     P1 = camera_matrix @ np.hstack((np.eye(3), np.zeros((3, 1))))
                     P2 = camera_matrix @ np.hstack((R_est, t_est))
                     
-                    # Triangulate points
-                    # The mask_pose from estimate_pose (which is from recoverPose) is applicable to points1 and points2
-                    points_3d = triangulate_points(points1, points2, P1, P2, inlier_mask=mask_pose)
+                    # Triangulate points. These points are in the coordinate system of camera (N-1)
+                    points_3d_relative_to_prev_cam = triangulate_points(points1, points2, P1, P2, inlier_mask=mask_pose)
                     
-                    if points_3d is not None and points_3d.shape[0] > 0:
-                        print(f"Reconstructed {points_3d.shape[0]} 3D points.")
-                        # For now, just printing. Future steps might involve storing/visualizing these.
+                    if points_3d_relative_to_prev_cam is not None and points_3d_relative_to_prev_cam.shape[0] > 0:
+                        print(f"Reconstructed {points_3d_relative_to_prev_cam.shape[0]} 3D points.")
+                        
+                        # Transform points (which are relative to camera N-1) to world coordinates
+                        # using the world pose of camera N-1 (prev_cam_R_world, prev_cam_t_world)
+                        points_3d_world = (prev_cam_R_world @ points_3d_relative_to_prev_cam.T + prev_cam_t_world).T
+
+                        if viz_enabled and viz_window:
+                            points_3d_world_viz = points_3d_world.astype(np.float32)
+                            cloud_widget = viz.WCloud(points_3d_world_viz, viz.Color.white())
+                            viz_window.showWidget("point_cloud", cloud_widget)
+                        elif not viz_enabled:
+                            print(f"DEBUG: World 3D points for visualization: {points_3d_world[:5]}")
+                            cv2.imshow("3D Visualization Placeholder", placeholder_img)
+                            # TODO: Implement 3D visualization here. OpenCV Viz was problematic.
                     else:
                         print("Triangulation failed or yielded no 3D points.")
-                else:
+                        if viz_enabled and viz_window: 
+                            try:
+                                viz_window.removeWidget("point_cloud")
+                            except: 
+                                pass 
+                        elif not viz_enabled:
+                            cv2.imshow("3D Visualization Placeholder", placeholder_img) 
+
+                    # Update world_R_previous and world_t_previous for the *next* iteration
+                    # They become the pose of the current camera (N) in the world
+                    world_R_previous = display_R.copy()
+                    world_t_previous = display_t.copy()
+
+                else: # R_est is None or t_est is None (pose estimation failed)
                     print("Pose estimation failed for this frame pair.")
+                    # Do not update world_R_previous, world_t_previous here, keep last good pose.
+                    # Also, display_R, display_t are not updated, so camera widget in Viz remains at last good pose.
+                    if viz_enabled and viz_window: 
+                        try:
+                            viz_window.removeWidget("point_cloud") # No new points to show
+                        except:
+                            pass
+                    elif not viz_enabled:
+                        cv2.imshow("3D Visualization Placeholder", placeholder_img)
             else:
                 print(f"Not enough good matches for pose estimation (found {len(good_matches)}, need {MIN_MATCHES_FOR_POSE}).")
+            if viz_enabled and viz_window: # Clear previous cloud
+                try:
+                    viz_window.removeWidget("point_cloud")
+                except:
+                    pass
+            elif not viz_enabled:
+                cv2.imshow("3D Visualization Placeholder", placeholder_img)
         else:
             # Clear the matches window if no previous descriptors or current descriptors
-             cv2.imshow("Feature Matches", np.zeros((480, 640, 3), dtype=np.uint8))
+            cv2.imshow("Feature Matches", np.zeros((480, 640, 3), dtype=np.uint8))
+            if viz_enabled and viz_window: # Clear previous cloud
+                try:
+                    viz_window.removeWidget("point_cloud")
+                except:
+                    pass
+            elif not viz_enabled:
+                cv2.imshow("3D Visualization Placeholder", placeholder_img)
 
 
         # Draw keypoints on the current undistorted color frame
@@ -199,6 +339,8 @@ def main():
         prev_descriptors = current_descriptors
         prev_undistorted_color_frame_for_drawing = undistorted_color_frame.copy()
 
+        if viz_enabled and viz_window:
+            viz_window.spinOnce(1, True) # Refresh Viz window
 
         key = cv2.waitKey(1) & 0xFF
         if key == ord('q'):
@@ -207,6 +349,8 @@ def main():
 
     # Release resources
     cap.release()
+    if viz_enabled and viz_window:
+        viz_window.close() # Close Viz window
     cv2.destroyAllWindows()
     print("Feature tracking loop finished.")
 
