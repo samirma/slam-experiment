@@ -143,3 +143,31 @@ Several parameters can be adjusted by modifying the constants defined in the res
     * `ratio_thresh`: Lowe's ratio test threshold for good matches.
 
 This project provides a foundation for experimenting with visual SLAM techniques.
+
+## Troubleshooting
+
+### 3D Visualization Issues (Open3D)
+
+If you encounter problems with the Open3D visualization window, such as a black screen, crashes, or specific warnings in the console, consider the following:
+
+*   **Symptoms:**
+    *   The "3D Reconstruction" window appears black or does not render correctly.
+    *   The application crashes with an error like `AttributeError: 'NoneType' object has no attribute 'set_zoom'` (or similar errors related to `view_control` not being initialized).
+    *   Console warnings such as `[Open3D WARNING] GLFW Error: Wayland: The platform does not support setting the window position` or `[Open3D WARNING] Failed to initialize GLEW.`
+
+*   **Potential Solutions & Causes:**
+    *   **Wayland Display Server:** If you are using Wayland (common on modern Linux distributions like Ubuntu 22.04+), Open3D/GLFW might have compatibility issues. Try prefixing your run command with environment variables to suggest X11 or a compatible IM module. For example:
+        ```bash
+        GDK_BACKEND=x11 python src/main.py
+        ```
+        or
+        ```bash
+        GLFW_IM_MODULE=ibus python src/main.py
+        ```
+    *   **Missing OpenGL Libraries:** The warning `Failed to initialize GLEW` can indicate missing OpenGL development libraries. On Debian/Ubuntu systems, try installing them:
+        ```bash
+        sudo apt-get update && sudo apt-get install libgl1-mesa-dev libglu1-mesa-dev
+        ```
+    *   **Graphics Drivers:** Ensure your system's graphics drivers are up to date. Outdated or misconfigured drivers are a common source of OpenGL-related problems.
+    *   **`opencv-contrib-python` vs `open3d`:** This project now uses `open3d` for 3D visualization. Ensure `open3d` is correctly installed as per the `requirements.txt` file. Previous visualization methods using `cv2.viz` (from `opencv-contrib-python`) are no longer used.
+    *   **View Control Warning:** If you see a console warning like `[WARNING] Failed to get Open3D view control...`, it means the 3D window might not have initialized its view controls correctly. The initial camera perspective might be off, or interaction might be limited, even if the application doesn't crash immediately. This is often related to the graphics environment issues mentioned above (Wayland, drivers, etc.).

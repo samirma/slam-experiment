@@ -155,10 +155,13 @@ def main():
 
     # Optional: Initial view control settings
     view_control = vis.get_view_control()
-    view_control.set_zoom(0.8)
-    view_control.set_lookat([0, 0, 0]) # Look at the origin
-    view_control.set_up([0, -1, 0])    # OpenCV's Y is down, Open3D's Y is up. This aligns them.
-    view_control.set_front([0, 0, -1]) # Look along the negative Z axis
+    if view_control:
+        view_control.set_zoom(0.8)
+        view_control.set_lookat([0, 0, 0]) # Look at the origin
+        view_control.set_up([0, -1, 0])    # OpenCV's Y is down, Open3D's Y is up. This aligns them.
+        view_control.set_front([0, 0, -1]) # Look along the negative Z axis
+    else:
+        print("[WARNING] Failed to get Open3D view control. Initial view settings may not be applied. This might be due to issues with graphics initialization (e.g., GLEW/Wayland).")
 
     # Accumulated pose of the 'previous' camera in the world (starts at origin)
     world_R_previous = np.eye(3, dtype=np.float64)
