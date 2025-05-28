@@ -13,7 +13,7 @@ CALIBRATION_IMAGE_DIR = "calibration_data"
 MIN_CALIBRATION_IMAGES = 5
 
 
-def capture_calibration_images():
+def capture_calibration_images(camera_index=0): # Added camera_index parameter
     """
     Captures images from the webcam for camera calibration automatically.
 
@@ -33,10 +33,10 @@ def capture_calibration_images():
     objp = np.zeros((CHECKERBOARD_SIZE[0] * CHECKERBOARD_SIZE[1], 3), np.float32)
     objp[:, :2] = np.mgrid[0:CHECKERBOARD_SIZE[0], 0:CHECKERBOARD_SIZE[1]].T.reshape(-1, 2) * SQUARE_SIZE_MM
 
-    cap = cv2.VideoCapture(0)
+    cap = cv2.VideoCapture(camera_index) # Use camera_index
 
     if not cap.isOpened():
-        print("Error: Could not open webcam.")
+        print(f"Error: Could not open webcam with index {camera_index}.") # Info about index
         return [], [], None
 
     cv2.namedWindow("Calibration Feed")
@@ -153,7 +153,9 @@ def capture_calibration_images():
     return objpoints, imgpoints, frame_size_for_return
 
 if __name__ == '__main__':
-    objpoints, imgpoints, frame_size_from_capture = capture_calibration_images()
+    camera_idx_for_testing = 0 # Define a camera index for testing
+    print(f"Running calibration capture for camera index: {camera_idx_for_testing}")
+    objpoints, imgpoints, frame_size_from_capture = capture_calibration_images(camera_index=camera_idx_for_testing)
 
     if frame_size_from_capture:
         print(f"Frame size obtained from capture: {frame_size_from_capture}")
@@ -172,11 +174,15 @@ if __name__ == '__main__':
         if camera_matrix is not None and dist_coeffs is not None:
             print("\nCalibration successful.")
             
-            calibration_file = os.path.join(CALIBRATION_IMAGE_DIR, "camera_params.npz")
-            save_calibration_data(calibration_file, camera_matrix, dist_coeffs, frame_size_from_capture, reprojection_error)
+            # Construct filename based on camera_idx_for_testing
+            filename_to_save = f"camera_params_idx{camera_idx_for_testing}.npz"
+            calibration_file_path = os.path.join(CALIBRATION_IMAGE_DIR, filename_to_save)
+            
+            save_calibration_data(camera_matrix, dist_coeffs, frame_size_from_capture, reprojection_error, camera_index=camera_idx_for_testing) # Pass index
             
             print("\nAttempting to load calibration data back...")
-            loaded_mtx, loaded_dist, loaded_fsize, loaded_r_error = load_calibration_data(calibration_file)
+            # Load using the same camera_idx_for_testing
+            loaded_mtx, loaded_dist, loaded_fsize, loaded_r_error = load_calibration_data(camera_index=camera_idx_for_testing)
             if loaded_mtx is not None:
                 print("Successfully loaded and verified saved data (see printed values above).")
         else:
@@ -244,56 +250,70 @@ def calibrate_camera(objpoints, imgpoints, frame_size):
         return None, None, None
 
 
-def save_calibration_data(filename, camera_matrix, dist_coeffs, frame_size, reprojection_error):
+def save_calibration_data(camera_matrix, dist_coeffs, frame_size, reprojection_error, camera_index=None):
     """
     Saves camera calibration parameters to a .npz file.
+    Filename is chosen based on camera_index.
 
     Args:
-        filename (str): Path to the file where data will be saved.
         camera_matrix (np.ndarray): The camera intrinsic matrix.
         dist_coeffs (np.ndarray): The distortion coefficients.
         frame_size (tuple): The frame size (width, height) used for calibration.
         reprojection_error (float): The mean reprojection error.
+        camera_index (int, optional): Index of the camera. Defaults to None.
     """
-    try:
-        directory = os.path.dirname(filename)
-        if directory and not os.path.exists(directory):
-            os.makedirs(directory)
-            print(f"Created directory: {directory}")
+    if camera_index is None:
+        base_filename = "camera_params.npz"
+    else:
+        base_filename = f"camera_params_idx{camera_index}.npz"
+    
+    filepath = os.path.join(CALIBRATION_IMAGE_DIR, base_filename)
 
-        np.savez(filename, 
+    try:
+        if not os.path.exists(CALIBRATION_IMAGE_DIR): # Ensure base directory exists
+            os.makedirs(CALIBRATION_IMAGE_DIR)
+            print(f"Created directory: {CALIBRATION_IMAGE_DIR}")
+
+        np.savez(filepath, 
                  camera_matrix=camera_matrix, 
                  dist_coeffs=dist_coeffs,
                  frame_size=np.array(frame_size), 
                  reprojection_error=reprojection_error)
-        print(f"Calibration data saved to {filename}")
+        print(f"Calibration data saved to {filepath}")
     except Exception as e:
-        print(f"Error saving calibration data to {filename}: {e}")
+        print(f"Error saving calibration data to {filepath}: {e}")
 
 
-def load_calibration_data(filename):
+def load_calibration_data(camera_index=None):
     """
-    Loads camera calibration parameters from a .npz file.
+    Loads camera calibration parameters from a .npz file based on camera_index.
 
     Args:
-        filename (str): Path to the file from which data will be loaded.
+        camera_index (int, optional): Index of the camera. Defaults to None.
 
     Returns:
         tuple: (camera_matrix, dist_coeffs, frame_size, reprojection_error) if successful,
                otherwise (None, None, None, None).
     """
-    if not os.path.exists(filename):
-        print(f"Calibration file {filename} not found.")
+    if camera_index is None:
+        base_filename = "camera_params.npz"
+    else:
+        base_filename = f"camera_params_idx{camera_index}.npz"
+        
+    filepath = os.path.join(CALIBRATION_IMAGE_DIR, base_filename)
+
+    if not os.path.exists(filepath):
+        print(f"Calibration file {filepath} not found.")
         return None, None, None, None
 
     try:
-        data = np.load(filename)
+        data = np.load(filepath)
         camera_matrix = data['camera_matrix']
         dist_coeffs = data['dist_coeffs']
         frame_size = tuple(data['frame_size']) 
         reprojection_error = data['reprojection_error'].item() 
 
-        print(f"Calibration data loaded from {filename}")
+        print(f"Calibration data loaded from {filepath}")
         print("Camera Matrix:\n", camera_matrix)
         print("Distortion Coefficients:\n", dist_coeffs)
         print("Frame Size:", frame_size)
@@ -301,5 +321,5 @@ def load_calibration_data(filename):
         
         return camera_matrix, dist_coeffs, frame_size, reprojection_error
     except Exception as e:
-        print(f"Error loading calibration data from {filename}: {e}")
+        print(f"Error loading calibration data from {filepath}: {e}")
         return None, None, None, None
