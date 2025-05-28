@@ -48,12 +48,13 @@ def estimate_pose(points1, points2, camera_matrix, dist_coeffs=None):
     # Since points are assumed to be undistorted, distCoeffs for findEssentialMat is None.
     # If they were distorted, we would pass 'dist_coeffs' here.
     try:
+        # distCoeffs is removed as points1_f32 and points2_f32 are assumed to be already undistorted.
+        # Passing it as a keyword argument was causing errors in some OpenCV versions.
         E, mask_e = cv2.findEssentialMat(points1_f32, points2_f32,
                                          camera_matrix,
                                          method=cv2.RANSAC,
                                          prob=0.999,
-                                         threshold=1.0,
-                                         distCoeffs=None) # Assuming points are undistorted
+                                         threshold=1.0)
     except cv2.error as e:
         print(f"OpenCV Error in findEssentialMat: {e}")
         return None, None, None, None
@@ -69,9 +70,10 @@ def estimate_pose(points1, points2, camera_matrix, dist_coeffs=None):
     # Recover Rotation (R) and Translation (t) from the Essential Matrix
     # Again, distCoeffs for recoverPose is None if points1_f32, points2_f32 are undistorted.
     try:
+        # distCoeffs is removed as points1_f32 and points2_f32 are assumed to be already undistorted.
+        # Removing for consistency with findEssentialMat and to avoid potential keyword argument issues.
         _, R, t, mask_rp = cv2.recoverPose(E, points1_f32, points2_f32,
                                         camera_matrix,
-                                        distCoeffs=None, # Assuming points are undistorted
                                         mask=mask_e) # Use the inlier mask from findEssentialMat
     except cv2.error as e:
         print(f"OpenCV Error in recoverPose: {e}")
