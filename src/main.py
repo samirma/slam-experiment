@@ -14,7 +14,7 @@ from src.calibration import (
 import cv2
 import numpy as np
 from src.camera_selection import select_camera_interactive # New import
-# import open3d as o3d # Removed: pyslam handles visualization
+import open3d as o3d # Removed: pyslam handles visualization
 
 import yaml # Added for pyslam config
 import time # Added for timestamps for pyslam
@@ -192,34 +192,33 @@ def main():
     cv2.namedWindow("Live Feed to pyslam") # Renamed window
     # cv2.namedWindow("Feature Matches") # Commented out for pyslam
 
-    # --- Open3D Visualization Setup (Commented out for pyslam) ---
-    # print("Initializing Open3D visualizer...")
-    # vis = o3d.visualization.Visualizer()
-    # vis.create_window(window_name="3D Reconstruction")
-    # point_cloud_o3d = o3d.geometry.PointCloud()
-    # vis.add_geometry(point_cloud_o3d)
-    # world_origin_axes = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.5, origin=[0, 0, 0])
-    # vis.add_geometry(world_origin_axes)
-    # canonical_camera_axes = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.3)
-    # current_cam_vis_o3d = o3d.geometry.TriangleMesh()
-    # current_cam_vis_o3d.vertices = canonical_camera_axes.vertices
-    # current_cam_vis_o3d.triangles = canonical_camera_axes.triangles
-    # current_cam_vis_o3d.compute_vertex_normals()
-    # current_cam_vis_o3d.paint_uniform_color([0.1, 0.1, 0.7])
-    # vis.add_geometry(current_cam_vis_o3d)
-    # view_control = vis.get_view_control()
-    # if view_control:
-    #     view_control.set_zoom(0.8)
-    #     view_control.set_lookat([0, 0, 0])
-    #     view_control.set_up([0, -1, 0])
-    #     view_control.set_front([0, 0, -1])
-    # else:
-    #     print("[WARNING] Failed to get Open3D view control...")
-    # world_R_previous = np.eye(3, dtype=np.float64)
-    # world_t_previous = np.zeros((3, 1), dtype=np.float64)
-    # display_R = np.eye(3, dtype=np.float64)
-    # display_t = np.zeros((3, 1), dtype=np.float64)
-    # print("Open3D visualizer initialization commented out for pyslam.")
+    # --- Open3D Visualization Setup ---
+    print("Initializing Open3D visualizer...")
+    vis = o3d.visualization.Visualizer()
+    vis.create_window(window_name="3D Reconstruction")
+    point_cloud_o3d = o3d.geometry.PointCloud()
+    vis.add_geometry(point_cloud_o3d)
+    world_origin_axes = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.5, origin=[0, 0, 0])
+    vis.add_geometry(world_origin_axes)
+    canonical_camera_axes = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.3)
+    current_cam_vis_o3d = o3d.geometry.TriangleMesh()
+    current_cam_vis_o3d.vertices = canonical_camera_axes.vertices
+    current_cam_vis_o3d.triangles = canonical_camera_axes.triangles
+    current_cam_vis_o3d.compute_vertex_normals()
+    current_cam_vis_o3d.paint_uniform_color([0.1, 0.1, 0.7]) # Blue color for camera
+    vis.add_geometry(current_cam_vis_o3d)
+    view_control = vis.get_view_control()
+    if view_control:
+        view_control.set_zoom(0.8)
+        view_control.set_lookat([0, 0, 0])
+        view_control.set_up([0, -1, 0])
+        view_control.set_front([0, 0, -1])
+    else:
+        print("[WARNING] Failed to get Open3D view control...")
+    # world_R_previous = np.eye(3, dtype=np.float64) # Commented out - SLAM system manages pose
+    # world_t_previous = np.zeros((3, 1), dtype=np.float64) # Commented out - SLAM system manages pose
+    # display_R = np.eye(3, dtype=np.float64) # Commented out - SLAM system manages pose
+    # display_t = np.zeros((3, 1), dtype=np.float64) # Commented out - SLAM system manages pose
 
     while True:
         ret, frame = cap.read()
@@ -252,7 +251,7 @@ def main():
         else:
             # This message will show if actual pyslam initialization is commented out
             # print(f"Timestamp: {current_timestamp:.3f} - Frame not processed (pyslam_system is None).")
-            # pass # pass can be removed if the print is also removed or commented
+            pass # pass can be removed if the print is also removed or commented
 
 
         # --- Original Feature Detection and Matching (Commented out for pyslam) ---
@@ -290,11 +289,58 @@ def main():
         # Display the live undistorted feed (can be useful even with pyslam's viewer)
         cv2.imshow("Live Feed to pyslam", undistorted_color_frame)
 
-        # --- Open3D Visualizer Update (Commented out for pyslam) ---
-        # if not vis.poll_events():
-        #     print("Open3D window was closed by user or events processing failed.")
-        #     break
-        # vis.update_renderer()
+        # --- Open3D Map Update ---
+        if slam_system is not None and 'vis' in locals() and vis.get_window_handle() is not None:
+            try:
+                # Try to get current camera pose from pyslam
+                # This is speculative - the actual method name might be different
+                current_pose_matrix = None
+                if hasattr(slam_system, 'get_current_pose_matrix'):
+                    current_pose_matrix = slam_system.get_current_pose_matrix() # Expected: 4x4 numpy array
+                elif hasattr(slam_system, 'get_camera_pose'):
+                    current_pose_matrix = slam_system.get_camera_pose() # Expected: 4x4 numpy array
+
+                if current_pose_matrix is not None and isinstance(current_pose_matrix, np.ndarray) and current_pose_matrix.shape == (4, 4):
+                    # Remove previous camera pose
+                    vis.remove_geometry(current_cam_vis_o3d, reset_bounding_box=False)
+                    current_cam_vis_o3d = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.3)
+                    current_cam_vis_o3d.paint_uniform_color([0.1, 0.1, 0.7]) # Blue
+                    current_cam_vis_o3d.transform(current_pose_matrix) # Apply the new pose
+                    vis.add_geometry(current_cam_vis_o3d, reset_bounding_box=False)
+
+                # Try to get map points from pyslam
+                # This is speculative - the actual method name might be different
+                map_points = None
+                if hasattr(slam_system, 'get_map_points'):
+                    map_points = slam_system.get_map_points() # Expected: list or Nx3 numpy array of points
+                elif hasattr(slam_system, 'get_point_cloud'):
+                    map_points_data = slam_system.get_point_cloud() # Might be an Open3D pointcloud object or raw points
+                    if isinstance(map_points_data, o3d.geometry.PointCloud):
+                        map_points = np.asarray(map_points_data.points)
+                    elif isinstance(map_points_data, np.ndarray):
+                        map_points = map_points_data
+
+                if map_points is not None and len(map_points) > 0:
+                    if isinstance(map_points, list): # convert to numpy array if list of lists/tuples
+                        map_points = np.array(map_points)
+
+                    if isinstance(map_points, np.ndarray) and map_points.ndim == 2 and map_points.shape[1] == 3:
+                        point_cloud_o3d.points = o3d.utility.Vector3dVector(map_points)
+                        vis.update_geometry(point_cloud_o3d)
+                    else:
+                        print(f"Debug: map_points received from pyslam is not in expected format (Nx3 numpy array). Shape: {map_points.shape if isinstance(map_points, np.ndarray) else 'Not a numpy array'}")
+
+            except AttributeError as ae:
+                print(f"Warning: Pyslam object might not have the expected method for map data: {ae}")
+            except Exception as e:
+                print(f"Error updating Open3D visualizer: {e}")
+
+        # --- Open3D Visualizer Update (Poll Events) ---
+        if 'vis' in locals() and vis.get_window_handle() is not None: # Check if vis exists and window is open
+            if not vis.poll_events():
+                print("Open3D window was closed by user or events processing failed.")
+                break # Exit the main loop
+            vis.update_renderer()
         
         key = cv2.waitKey(1) & 0xFF
         if key == ord('q'):
@@ -319,10 +365,10 @@ def main():
     # print("INFO: Pyslam shutdown would be called here if system was initialized.") # Removed
     # --- End Pyslam Shutdown ---
 
-    # --- Open3D Window Destruction (Commented out for pyslam) ---
-    # if vis:
-    #     print("Destroying Open3D window...")
-    #     vis.destroy_window()
+    # --- Open3D Window Destruction ---
+    if 'vis' in locals() and vis.get_window_handle() is not None:
+        print("Destroying Open3D window...")
+        vis.destroy_window()
     print("Application finished.")
 
 
