@@ -21,9 +21,9 @@ import time # Added for timestamps for pyslam
 
 # --- Placeholder for pyslam imports ---
 # NOTE: These are speculative and depend on the actual pyslam library structure.
-# import pyslam
-# from pyslam.config import Config as PyslamConfig # Example
-# from pyslam.slam_system import SLAMSystem        # Example
+import pyslam
+from pyslam.config import Config as PyslamConfig
+from pyslam.slam_system import SLAMSystem
 # --- End Placeholder for pyslam imports ---
 
 
@@ -143,19 +143,27 @@ def main():
 
             # --- Speculative pyslam Initialization ---
             # NOTE: The following lines are highly speculative and depend on pyslam's API.
-            # Example:
-            # pyslam_config_obj = PyslamConfig(config_dict=pyslam_general_config_data)
-            # slam_system = SLAMSystem(config=pyslam_config_obj,
-            #                            enable_viewer=pyslam_config_obj.get_global_param('kUseViewer', True))
-            # print("pyslam system initialized (Placeholder).")
+            print("Initializing Pyslam with the following configuration data:") # New print for debugging
+            print(yaml.dump(pyslam_general_config_data)) # New print for debugging
+
+            # Ensure pyslam.config and pyslam.slam_system are imported
+            # For example, add near other imports:
+            # import pyslam
+            # from pyslam.config import Config as PyslamConfig
+            # from pyslam.slam_system import SLAMSystem
+
+            pyslam_config_obj = PyslamConfig(config_dict=pyslam_general_config_data)
+            slam_system = SLAMSystem(config=pyslam_config_obj,
+                                       enable_viewer=pyslam_config_obj.get_global_param('kUseViewer', True))
+            print("pyslam system initialized.") # Modified print
             # --- End Speculative pyslam Initialization ---
 
             # For now, we'll just print that we would initialize it.
-            print(f"INFO: Pyslam would be initialized here using the main config '{pyslam_config_path}' and camera-specific settings '{camera_settings_file}'.")
-            print("INFO: Actual pyslam initialization code is commented out as its API is not yet known.")
+            # print(f"INFO: Pyslam would be initialized here using the main config '{pyslam_config_path}' and camera-specific settings '{camera_settings_file}'.")
+            # print("INFO: Actual pyslam initialization code is commented out as its API is not yet known.")
             # Set a dummy slam_system if actual pyslam is not being run to avoid errors later if any logic uses it.
             # For this subtask, we are commenting out processing, so it might not be strictly needed.
-            # slam_system = "dummy_pyslam_object"
+            # slam_system = "dummy_pyslam_object" # This line is effectively replaced by the actual init
 
         except Exception as e:
             print(f"Error loading or modifying pyslam configuration: {e}")
@@ -232,11 +240,11 @@ def main():
                 # The actual method signature (e.g., needs BGR or RGB, specific timestamp format)
                 # needs to be verified from pyslam's documentation.
                 # Example:
-                # slam_system.process_image(undistorted_color_frame, timestamp=current_timestamp)
+                slam_system.process_image(undistorted_color_frame, timestamp=current_timestamp)
 
                 # For now, just indicate it would be processed.
                 # print(f"Timestamp: {current_timestamp:.3f} - Frame processed by pyslam (Placeholder).")
-                pass # Placeholder for actual call
+                # pass # Placeholder for actual call # Removed
 
             except Exception as e:
                 print(f"Error during pyslam process_image: {e}")
@@ -244,7 +252,7 @@ def main():
         else:
             # This message will show if actual pyslam initialization is commented out
             # print(f"Timestamp: {current_timestamp:.3f} - Frame not processed (pyslam_system is None).")
-            pass
+            # pass # pass can be removed if the print is also removed or commented
 
 
         # --- Original Feature Detection and Matching (Commented out for pyslam) ---
@@ -303,12 +311,12 @@ def main():
         try:
             # NOTE: Speculative call to pyslam's shutdown method.
             # Example:
-            # slam_system.shutdown()
-            # print("pyslam system shutdown successfully (Placeholder).")
-            pass # Placeholder for actual call
+            slam_system.shutdown()
+            print("pyslam system shutdown successfully.") # Modified print
+            # pass # Placeholder for actual call # Removed
         except Exception as e:
             print(f"Error during pyslam shutdown: {e}")
-    print("INFO: Pyslam shutdown would be called here if system was initialized.")
+    # print("INFO: Pyslam shutdown would be called here if system was initialized.") # Removed
     # --- End Pyslam Shutdown ---
 
     # --- Open3D Window Destruction (Commented out for pyslam) ---
