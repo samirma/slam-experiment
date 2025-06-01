@@ -1,0 +1,19 @@
+# Dockerfile.runner
+FROM python:3.10-slim
+
+WORKDIR /script_execution
+
+# Install git for any potential pip install git+... dependencies crew might have indirectly
+RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
+
+# First copy only requirements for runner to leverage Docker cache
+COPY app/runner_requirements.txt .
+RUN pip install --no-cache-dir -r runner_requirements.txt
+
+# The script will be mounted into this directory or copied here
+# Add a non-root user for security
+RUN useradd -ms /bin/bash scriptuser
+USER scriptuser
+
+# The entrypoint or command will be specified at runtime by the script_runner.py
+# For example, python /script_execution/temp_script.py

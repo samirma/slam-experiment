@@ -1,0 +1,9 @@
+crewai>=0.28.8
+crewai_tools>=0.1.6
+python-dotenv
+# Add any other specific tool dependencies if they are common, e.g.
+# duckduckgo-search
+# beautifulsoup4
+# requests
+# google-api-python-client
+# etc.

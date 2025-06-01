@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CrewAI Automator</title>
+    <style>
+        body { font-family: sans-serif; margin: 20px; background-color: #f4f4f4; color: #333; }
+        .container { background-color: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+        h1 { color: #2c3e50; text-align: center; }
+        label { display: block; margin-top: 10px; font-weight: bold; }
+        textarea, select { width: 100%; padding: 10px; margin-top: 5px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }
+        button { background-color: #3498db; color: white; padding: 10px 15px; border: none; border-radius: 4px; cursor: pointer; margin-top: 20px; }
+        button:hover { background-color: #2980b9; }
+        pre { background-color: #eee; padding: 10px; border-radius: 4px; white-space: pre-wrap; word-wrap: break-word; }
+        .output-section { margin-top: 20px; }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>CrewAI Script Automator</h1>
+
+        <div>
+            <label for="user_input">Initial Instruction Input:</label>
+            <textarea id="user_input" name="user_input" rows="5" placeholder="Enter your instructions for the CrewAI agent..."></textarea>
+        </div>
+
+        <div>
+            <label for="llm_provider">Select LLM Provider:</label>
+            <select id="llm_provider" name="llm_provider">
+                <option value="gemini">Gemini</option>
+                <option value="chatgpt">ChatGPT</option>
+                <option value="deepseek">DeepSeek</option>
+            </select>
+        </div>
+
+        <button id="generateBtn">Generate Script</button>
+
+        <div class="output-section">
+            <h2>Generated Script:</h2>
+            <pre id="generated_script_output"># Script will appear here...</pre>
+            <button id="runBtn" class="hidden">Run Script</button>
+        </div>
+
+        <div class="output-section">
+            <h2>Execution Output:</h2>
+            <pre id="execution_output"># Execution results will appear here...</pre>
+        </div>
+    </div>
+
+    <script>
+        document.getElementById('generateBtn').addEventListener('click', async () => {
+            const userInput = document.getElementById('user_input').value;
+            const llmProvider = document.getElementById('llm_provider').value;
+
+            const response = await fetch('/generate_script', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ user_input: userInput, llm_provider: llmProvider })
+            });
+            const result = await response.json();
+
+            document.getElementById('generated_script_output').textContent = result.generated_script;
+            if (result.generated_script && result.generated_script !== "# Placeholder for generated script") {
+                document.getElementById('runBtn').classList.remove('hidden');
+            } else {
+                document.getElementById('runBtn').classList.add('hidden');
+            }
+        });
+
+        document.getElementById('runBtn').addEventListener('click', async () => {
+            const scriptToRun = document.getElementById('generated_script_output').textContent;
+
+            const response = await fetch('/run_script', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ script: scriptToRun })
+            });
+            const result = await response.json();
+
+            document.getElementById('execution_output').textContent = result.output;
+        });
+    </script>
+</body>
+</html>
