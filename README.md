@@ -1,32 +1,36 @@
 # SLAM Experiment Project
 
-This project implements a basic Simultaneous Localization and Mapping (SLAM) pipeline using Python and OpenCV. It includes modules for camera calibration, feature detection and matching, and 2-view structure from motion (SfM) to estimate camera pose and triangulate 3D points. The system now supports multiple cameras, per-camera calibration, real-time 3D reconstruction visualization, and display of the estimated camera pose in the 3D view.
+This project implements a Simultaneous Localization and Mapping (SLAM) system using Python.
+It now utilizes the `pyslam` library (https://github.com/luigifreda/pyslam) for its core SLAM functionality, replacing the previous custom implementation.
+The system supports multiple cameras and performs per-camera calibration.
 
 ## Project Structure
 
 ```
 slam-experiment/
+├── config/
+│   ├── pyslam_config.yaml                    # Main configuration for pyslam
+│   └── pyslam_settings_idx{CAM_IDX}.yaml     # Camera-specific settings for pyslam (generated)
 ├── requirements.txt
 ├── README.md
 ├── src/
-│   ├── calibration.py    # Handles camera calibration
-│   ├── feature_utils.py  # Utilities for feature detection and matching
-│   ├── main.py           # Main application script
-│   └── sfm.py            # Functions for Structure from Motion (pose estimation, triangulation)
-└── calibration_data/     # Directory to save calibration images and parameters (created automatically)
+│   ├── calibration.py    # Handles camera calibration & generation of pyslam camera settings
+│   ├── main.py           # Main application script (integrates calibration and pyslam)
+│   └── camera_selection.py # Utility for selecting camera
+└── calibration_data/     # Directory to save raw calibration images and original parameters (e.g., camera_params_idx0.npz)
 ```
 
-## Features
+## Core Changes & Features
 
+* **`pyslam` Integration**: This project now utilizes the `pyslam` library for its core SLAM functionality.
 * **Multi-Camera Support**: Users can select from a list of available cameras connected to the system.
-* **Per-Camera Calibration**: Captures checkerboard images and calculates camera intrinsic matrix and distortion coefficients for the selected camera. Calibration data is saved and loaded specific to each camera index (e.g., `camera_params_idx0.npz`).
-* **Feature Detection**: Uses ORB detector to find keypoints in images.
-* **Feature Matching**: Matches features between consecutive frames using a brute-force matcher with ratio test.
-* **Pose Estimation**: Estimates camera rotation and translation between two views using the 5-point algorithm for the Essential Matrix and RANSAC. The estimated pose is accumulated over frames.
-* **3D Triangulation**: Reconstructs 3D points from matched 2D keypoints and estimated poses.
-* **Live Feed**: Shows live webcam feed with undistorted images, detected keypoints, and feature matches.
-* **Real-time 3D Reconstruction Visualization**: Displays the triangulated 3D point cloud in a dedicated 3D window using the Open3D library.
-* **Camera Pose Visualization**: Shows the estimated camera pose trajectory (represented by coordinate axes) in the Open3D window, including the current camera position and the initial world origin.
+* **Per-Camera Calibration**: Captures checkerboard images and calculates camera intrinsic matrix and distortion coefficients for the selected camera.
+    * Standard calibration data is saved (e.g., `calibration_data/camera_params_idx0.npz`).
+    * Camera calibration parameters for `pyslam` are also stored in `config/pyslam_settings_idx{CAMERA_INDEX}.yaml` (where `{CAMERA_INDEX}` is the selected camera index), generated automatically after camera calibration.
+* **Configuration**:
+    * The behavior of `pyslam` itself is configured via `config/pyslam_config.yaml`. You can edit this file to change SLAM parameters, feature types, enable/disable the viewer, etc., according to `pyslam`'s documentation.
+* **Live Feed**: Shows the live undistorted webcam feed that is being provided to `pyslam`.
+* **3D Visualization**: The previous 3D visualization based on Open3D has been replaced by `pyslam`'s own visualization system (typically using Pangolin). This should activate if `kUseViewer: True` is set in `config/pyslam_config.yaml`.
 
 ## Setup and Installation
 
@@ -59,7 +63,36 @@ Once the virtual environment is activated, install the required Python packages 
 ```bash
 pip install -r requirements.txt
 ```
-The primary dependencies are `numpy`, `opencv-python` (for core computer vision tasks), and `open3d` (for 3D visualization). The `requirements.txt` file has been updated to include `open3d`.
+The primary dependencies are `numpy`, `opencv-python` (for core computer vision tasks and calibration), `PyYAML` (for handling `pyslam` configurations), and `pyslam` itself (which you'll install from its repository).
+
+## Additional Dependencies (`pyslam`)
+
+As mentioned, this project now relies on `pyslam` for its core SLAM operations. `pyslam` is a separate, comprehensive SLAM library that needs to be installed from its own repository.
+
+**Key points regarding `pyslam` integration:**
+*   This project utilizes the `pyslam` library (https://github.com/luigifreda/pyslam) for its core SLAM functionality, replacing the previous custom implementation.
+*   Camera calibration parameters for `pyslam` are stored in `config/pyslam_settings_idx{CAMERA_INDEX}.yaml` (where `{CAMERA_INDEX}` is the selected camera index), generated automatically after camera calibration.
+*   The behavior of `pyslam` itself is configured via `config/pyslam_config.yaml`. You can edit this file to change SLAM parameters, feature types, enable/disable the viewer, etc., according to `pyslam`'s documentation.
+*   The previous 3D visualization based on Open3D has been replaced by `pyslam`'s own visualization system (typically using Pangolin), which should activate if `kUseViewer: True` is set in `config/pyslam_config.yaml`.
+
+To install `pyslam`:
+
+1.  **Clone the `pyslam` repository recursively:**
+    ```bash
+    git clone --recursive https://github.com/luigifreda/pyslam.git
+    ```
+2.  **Navigate into the cloned `pyslam` directory:**
+    ```bash
+    cd pyslam
+    ```
+3.  **Run the installation script:**
+    ```bash
+    ./install_all.sh
+    ```
+    This script might create a Python virtual environment (e.g., `pyslam_env`) or use Conda. Please follow the instructions and output provided by the `pyslam` installation script carefully.
+
+4.  **Activate `pyslam` environment (if necessary):**
+    If `pyslam` was installed into its own virtual environment or Conda environment, you will need to activate it before running the main application if you intend to use `pyslam`-dependent features.
 
 ## Running the Application
 
@@ -93,81 +126,47 @@ python src/main.py
     *   Captured images (grayscale) are saved in the `calibration_data/` directory (e.g., `calib_img_1.png`).
     *   Press **'q'** to finish capturing images and proceed to calibration (if enough images are captured) or to quit the capture mode.
     *   Press **ESC** to discard all captures and exit the calibration image capture process.
-    *   If calibration is successful, the parameters (`camera_matrix`, `dist_coeffs`, `frame_size`, `reprojection_error`) are saved to a camera-specific file in the `calibration_data/` directory (e.g., `camera_params_idx0.npz`).
-4.  **Feature Detection, Matching, and 3D Reconstruction Loop**:
-    *   Once the selected camera is calibrated (or existing data is loaded), the application starts the main SfM loop.
-    *   **Live Feed Windows**:
-        *   "Live Feed with Keypoints": Shows the undistorted live video from the selected camera, with detected ORB keypoints overlaid.
-        *   "Feature Matches": Displays matches between features from the current and previous frames.
-    *   **3D Visualization Window ("3D Reconstruction")**:
-        *   An Open3D window titled "3D Reconstruction" will open to display the 3D scene.
-        *   This window shows:
-            *   A large coordinate system widget representing the world origin.
-            *   A smaller coordinate system widget representing the current estimated pose of the camera, updated in real-time.
-            *   A point cloud representing the triangulated 3D points from the scene.
-        *   You can interact with this 3D scene using standard Open3D mouse controls (e.g., left-click and drag to rotate, right-click and drag or scroll wheel to zoom, middle-click and drag to pan).
-    *   **Console Output**: Information about pose estimation success/failure and number of reconstructed points will be printed to the console.
+    *   If calibration is successful, the parameters (`camera_matrix`, `dist_coeffs`, `frame_size`, `reprojection_error`) are saved to a camera-specific file in the `calibration_data/` directory (e.g., `camera_params_idx0.npz`). Additionally, a `pyslam_settings_idx{CAMERA_INDEX}.yaml` file is generated in the `config/` directory for use by `pyslam`.
+4.  **SLAM Processing with `pyslam`**:
+    *   Once the selected camera is calibrated and its `pyslam` settings file is generated, the application initializes `pyslam`.
+    *   **Live Feed Window**: An OpenCV window ("Live Feed to pyslam") shows the undistorted live video from the selected camera that is being fed to `pyslam`.
+    *   **`pyslam` Viewer**: If `kUseViewer: True` is set in `config/pyslam_config.yaml`, `pyslam`'s own visualization window (typically Pangolin-based) should open and display the map, camera trajectory, and features.
+    *   **Console Output**: Information from `pyslam` (if any) and status messages from `main.py` will be printed to the console.
 5.  **Exiting**:
-    *   Press **'q'** in any of the OpenCV display windows (Live Feed, Matches) to quit the main loop.
-    *   Closing the Open3D "3D Reconstruction" window will also terminate the application.
+    *   Press **'q'** in the "Live Feed to pyslam" OpenCV window to quit the main loop.
+    *   Closing `pyslam`'s viewer window may also terminate the application, depending on `pyslam`'s behavior.
 
 ## Key Files and Modules
 
-* **`src/main.py`**: The main entry point. Handles camera selection, orchestrates the per-camera calibration process, manages the main SfM loop, and integrates 3D visualization.
+* **`src/main.py`**: The main entry point. Handles camera selection, orchestrates the per-camera calibration process, initializes and manages the `pyslam` system.
 * **`src/calibration.py`**: Contains functions for:
     * Capturing calibration images from a specified camera.
     * Performing camera calibration using `cv2.calibrateCamera()`.
-    * Saving and loading camera-specific calibration parameters (e.g., `camera_params_idx{index}.npz`).
-* **`src/feature_utils.py`**: Provides utility functions for:
-    * Detecting features (e.g., ORB).
-    * Matching features between two sets of descriptors.
-* **`src/sfm.py`**: Implements Structure from Motion functionalities:
-    * `estimate_pose()`: Estimates relative camera pose (R, t).
-    * `triangulate_points()`: Reconstructs 3D points.
+    * Saving camera-specific calibration parameters (both the original `.npz` and the `pyslam`-specific `.yaml` in `config/`).
+* **`src/camera_selection.py`**: Utility for detecting and selecting cameras.
+* **`config/pyslam_config.yaml`**: Main configuration file for `pyslam`. Edit this to control SLAM parameters, feature types, viewer, etc.
+* **`config/pyslam_settings_idx{CAMERA_INDEX}.yaml`**: Camera-specific calibration files for `pyslam`, generated automatically.
 
-## Configuration Constants
+## Configuration
 
-Several parameters can be adjusted by modifying the constants defined in the respective Python files:
-
-* **`src/calibration.py`**:
+* **Camera Calibration Parameters (`src/calibration.py`)**:
     * `CHECKERBOARD_SIZE`: Dimensions of the internal corners of your checkerboard.
     * `SQUARE_SIZE_MM`: The side length of a square on your checkerboard in millimeters.
     * `MAX_IMAGES`: Maximum number of calibration images to capture.
     * `AUTO_CAPTURE_INTERVAL_SECONDS`: Time interval between automatic image captures during calibration.
     * `MIN_CALIBRATION_IMAGES`: Minimum number of calibration images required for calibration.
-    * `CALIBRATION_IMAGE_DIR`: Directory where calibration images and parameter files are stored.
-* **`src/main.py`**:
-    * `MIN_MATCHES_FOR_POSE`: Minimum number of good feature matches required to attempt pose estimation.
-    * The calibration file path is no longer a single static `CALIBRATION_FILE` constant but is dynamically generated based on the selected camera index (e.g., `calibration_data/camera_params_idx{selected_camera_index}.npz`).
-* **`src/feature_utils.py`**:
-    * `ratio_thresh`: Lowe's ratio test threshold for good matches.
+    * `CALIBRATION_IMAGE_DIR`: Directory where raw calibration images and `.npz` parameter files are stored.
+* **`pyslam` SLAM Parameters (`config/pyslam_config.yaml`)**:
+    * This file is passed to `pyslam`. Refer to `pyslam`'s documentation for details on its various configuration options (e.g., `kFeatureType`, `kUseLoopClosing`, `kUseViewer`, ORB extractor settings, etc.).
+    * The `DATASET.FOLDER_DATASET.settings_file` path within this config is updated dynamically by `main.py` to point to the correct camera-specific YAML file (e.g., `config/pyslam_settings_idx0.yaml`).
 
-This project provides a foundation for experimenting with visual SLAM techniques.
+This project provides a foundation for experimenting with `pyslam` using a live camera feed.
 
 ## Troubleshooting
 
-### 3D Visualization Issues (Open3D)
+If you encounter issues, consider the following:
 
-If you encounter problems with the Open3D visualization window, such as a black screen, crashes, or specific warnings in the console, consider the following:
-
-*   **Symptoms:**
-    *   The "3D Reconstruction" window appears black or does not render correctly.
-    *   The application crashes with an error like `AttributeError: 'NoneType' object has no attribute 'set_zoom'` (or similar errors related to `view_control` not being initialized).
-    *   Console warnings such as `[Open3D WARNING] GLFW Error: Wayland: The platform does not support setting the window position` or `[Open3D WARNING] Failed to initialize GLEW.`
-
-*   **Potential Solutions & Causes:**
-    *   **Wayland Display Server:** If you are using Wayland (common on modern Linux distributions like Ubuntu 22.04+), Open3D/GLFW might have compatibility issues. Try prefixing your run command with environment variables to suggest X11 or a compatible IM module. For example:
-        ```bash
-        GDK_BACKEND=x11 python src/main.py
-        ```
-        or
-        ```bash
-        GLFW_IM_MODULE=ibus python src/main.py
-        ```
-    *   **Missing OpenGL Libraries:** The warning `Failed to initialize GLEW` can indicate missing OpenGL development libraries. On Debian/Ubuntu systems, try installing them:
-        ```bash
-        sudo apt-get update && sudo apt-get install libgl1-mesa-dev libglu1-mesa-dev
-        ```
-    *   **Graphics Drivers:** Ensure your system's graphics drivers are up to date. Outdated or misconfigured drivers are a common source of OpenGL-related problems.
-    *   **`opencv-contrib-python` vs `open3d`:** This project now uses `open3d` for 3D visualization. Ensure `open3d` is correctly installed as per the `requirements.txt` file. Previous visualization methods using `cv2.viz` (from `opencv-contrib-python`) are no longer used.
-    *   **View Control Warning:** If you see a console warning like `[WARNING] Failed to get Open3D view control...`, it means the 3D window might not have initialized its view controls correctly. The initial camera perspective might be off, or interaction might be limited, even if the application doesn't crash immediately. This is often related to the graphics environment issues mentioned above (Wayland, drivers, etc.).
+*   **`pyslam` Installation:** Ensure `pyslam` and all its dependencies (including Pangolin for the viewer) are correctly installed. Follow the installation instructions in the `pyslam` repository carefully.
+*   **Camera Access:** Verify your camera is accessible by OpenCV. Errors like "Could not open webcam" usually point to camera connection or permission issues.
+*   **`pyslam` Configuration:** Check `config/pyslam_config.yaml` and the generated `config/pyslam_settings_idx{CAMERA_INDEX}.yaml`. Incorrect paths or parameters can cause `pyslam` to fail.
+*   **`pyslam` Viewer Issues:** If `pyslam`'s viewer does not appear or crashes, this is likely an issue within `pyslam` or its Pangolin dependency (graphics drivers, Wayland/X11 compatibility, etc.). Consult `pyslam`'s documentation or issue tracker.

@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 import os
+import yaml
 
 # Default checkerboard parameters
 CHECKERBOARD_SIZE = (12, 8)  # (width, height) internal corners
@@ -323,3 +324,70 @@ def load_calibration_data(camera_index=None):
     except Exception as e:
         print(f"Error loading calibration data from {filepath}: {e}")
         return None, None, None, None
+
+
+def save_calibration_for_pyslam(camera_matrix, dist_coeffs, frame_size, camera_index, output_dir="config"):
+    """
+    Saves camera calibration parameters in a YAML format suitable for pyslam/ORB-SLAM2.
+
+    Args:
+        camera_matrix (np.ndarray): The camera intrinsic matrix (mtx).
+        dist_coeffs (np.ndarray): The distortion coefficients (dist).
+        frame_size (tuple): Frame size (width, height).
+        camera_index (int): Index of the camera.
+        output_dir (str): Directory to save the YAML file.
+    """
+    if camera_matrix is None or dist_coeffs is None or frame_size is None:
+        print("Error: Camera matrix, distortion coefficients, or frame size is None. Cannot save for pyslam.")
+        return
+
+    # Ensure output directory exists
+    os.makedirs(output_dir, exist_ok=True)
+
+    filename = os.path.join(output_dir, f"pyslam_settings_idx{camera_index}.yaml")
+
+    # Extract parameters
+    fx = camera_matrix[0, 0]
+    fy = camera_matrix[1, 1]
+    cx = camera_matrix[0, 2]
+    cy = camera_matrix[1, 2]
+
+    # Ensure dist_coeffs is a flat array or list for consistent indexing
+    dist_coeffs_flat = dist_coeffs.flatten()
+
+    k1 = dist_coeffs_flat[0] if len(dist_coeffs_flat) > 0 else 0.0
+    k2 = dist_coeffs_flat[1] if len(dist_coeffs_flat) > 1 else 0.0
+    p1 = dist_coeffs_flat[2] if len(dist_coeffs_flat) > 2 else 0.0
+    p2 = dist_coeffs_flat[3] if len(dist_coeffs_flat) > 3 else 0.0
+    k3 = dist_coeffs_flat[4] if len(dist_coeffs_flat) > 4 else 0.0
+
+    # Pyslam expects 5 distortion coefficients (k1, k2, p1, p2, k3)
+    # If fewer are provided, pad with zeros.
+    # If more are provided (e.g., fisheye with k4, k5, k6), pyslam typically only uses the first 5.
+
+    width, height = frame_size
+
+    data = {
+        "Camera.type": "PinHole",
+        "Camera.fx": float(fx),
+        "Camera.fy": float(fy),
+        "Camera.cx": float(cx),
+        "Camera.cy": float(cy),
+        "Camera.k1": float(k1),
+        "Camera.k2": float(k2),
+        "Camera.p1": float(p1),
+        "Camera.p2": float(p2),
+        "Camera.k3": float(k3),
+        "Camera.width": int(width),
+        "Camera.height": int(height),
+        "Camera.fps": 30,  # Default FPS, can be adjusted
+        "Camera.RGB": 1,   # Assuming color images
+    }
+
+    try:
+        with open(filename, 'w') as f:
+            f.write("%YAML:1.0\n\n")  # Write YAML header
+            yaml.dump(data, f, sort_keys=False, indent=4, default_flow_style=None)
+        print(f"pyslam camera settings saved to {filename}")
+    except Exception as e:
+        print(f"Error writing pyslam YAML file {filename}: {e}")

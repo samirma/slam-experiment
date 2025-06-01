@@ -6,14 +6,25 @@ from src.calibration import (
     save_calibration_data,
     MIN_CALIBRATION_IMAGES, # Useful for checking if enough images were captured
     CALIBRATION_IMAGE_DIR, # For constructing default path
-    MIN_CALIBRATION_IMAGES # For checking if enough images were captured
+    MIN_CALIBRATION_IMAGES, # For checking if enough images were captured
+    save_calibration_for_pyslam # Added import
 )
-from src.feature_utils import detect_features, match_features
-from src.sfm import estimate_pose, triangulate_points # Added
+# from src.feature_utils import detect_features, match_features # Removed: pyslam handles features
+# from src.sfm import estimate_pose, triangulate_points # Removed: pyslam handles SfM/SLAM
 import cv2
 import numpy as np
 from src.camera_selection import select_camera_interactive # New import
-import open3d as o3d # New import for Open3D
+# import open3d as o3d # Removed: pyslam handles visualization
+
+import yaml # Added for pyslam config
+import time # Added for timestamps for pyslam
+
+# --- Placeholder for pyslam imports ---
+# NOTE: These are speculative and depend on the actual pyslam library structure.
+# import pyslam
+# from pyslam.config import Config as PyslamConfig # Example
+# from pyslam.slam_system import SLAMSystem        # Example
+# --- End Placeholder for pyslam imports ---
 
 
 # CALIBRATION_FILE = os.path.join(CALIBRATION_IMAGE_DIR, "camera_params.npz") # No longer a single global file
@@ -108,243 +119,202 @@ def main():
         if frame_size:
              print("Frame Size used for calibration:", frame_size)
         # Reprojection error would have been printed by load or calibrate functions
+
+        # Save calibration for pyslam
+        save_calibration_for_pyslam(camera_matrix, dist_coeffs, frame_size, selected_camera_index)
+        # The function save_calibration_for_pyslam already prints a message,
+        # so an additional print here might be redundant unless more specific context is needed.
+        # print(f"pyslam camera settings saved to config/pyslam_settings_idx{selected_camera_index}.yaml")
+
+        # --- Initialize Pyslam (Placeholder) ---
+        print("\n--- Initializing pyslam System ---")
+        slam_system = None # Placeholder for the SLAM system object
+        pyslam_config_path = "config/pyslam_config.yaml"
+
+        try:
+            with open(pyslam_config_path, 'r') as f:
+                pyslam_general_config_data = yaml.safe_load(f)
+
+            # Dynamically update the path to the camera-specific settings file
+            camera_settings_file = f"config/pyslam_settings_idx{selected_camera_index}.yaml"
+            pyslam_general_config_data['DATASET']['FOLDER_DATASET']['settings_file'] = camera_settings_file
+
+            print(f"Updated pyslam config to use camera settings: {camera_settings_file}")
+
+            # --- Speculative pyslam Initialization ---
+            # NOTE: The following lines are highly speculative and depend on pyslam's API.
+            # Example:
+            # pyslam_config_obj = PyslamConfig(config_dict=pyslam_general_config_data)
+            # slam_system = SLAMSystem(config=pyslam_config_obj,
+            #                            enable_viewer=pyslam_config_obj.get_global_param('kUseViewer', True))
+            # print("pyslam system initialized (Placeholder).")
+            # --- End Speculative pyslam Initialization ---
+
+            # For now, we'll just print that we would initialize it.
+            print(f"INFO: Pyslam would be initialized here using the main config '{pyslam_config_path}' and camera-specific settings '{camera_settings_file}'.")
+            print("INFO: Actual pyslam initialization code is commented out as its API is not yet known.")
+            # Set a dummy slam_system if actual pyslam is not being run to avoid errors later if any logic uses it.
+            # For this subtask, we are commenting out processing, so it might not be strictly needed.
+            # slam_system = "dummy_pyslam_object"
+
+        except Exception as e:
+            print(f"Error loading or modifying pyslam configuration: {e}")
+            print("Cannot proceed with pyslam. Exiting.")
+            return
+
     else:
         print("\n--- Calibration Status ---")
         print("Camera not calibrated. Reconstruction may be inaccurate or fail.")
         print("Cannot start feature tracking without camera calibration.")
         return # Exit if not calibrated
 
-    # --- Feature Detection and Matching Loop ---
-    print("\nStarting feature detection and matching loop...")
+    # --- Pyslam Processing Loop ---
+    print("\nStarting pyslam processing loop...")
     
-    prev_keypoints = None
-    prev_descriptors = None
-    prev_undistorted_color_frame_for_drawing = None # To store the previous undistorted color frame
-
-    orb_detector = cv2.ORB_create() # Initialize ORB detector once
+    # prev_keypoints = None # Commented out for pyslam
+    # prev_descriptors = None # Commented out for pyslam
+    # prev_undistorted_color_frame_for_drawing = None # Commented out for pyslam
+    # orb_detector = cv2.ORB_create() # Commented out for pyslam
 
     cap = cv2.VideoCapture(selected_camera_index) # Use selected camera
     if not cap.isOpened():
-        print(f"Error: Could not open webcam with index {selected_camera_index} for feature tracking.")
+        print(f"Error: Could not open webcam with index {selected_camera_index} for pyslam.")
         return
 
-    cv2.namedWindow("Live Feed with Keypoints")
-    cv2.namedWindow("Feature Matches")
+    cv2.namedWindow("Live Feed to pyslam") # Renamed window
+    # cv2.namedWindow("Feature Matches") # Commented out for pyslam
 
-    # --- Open3D Visualization Setup ---
-    print("Initializing Open3D visualizer...")
-    vis = o3d.visualization.Visualizer()
-    vis.create_window(window_name="3D Reconstruction")
-
-    point_cloud_o3d = o3d.geometry.PointCloud()
-    vis.add_geometry(point_cloud_o3d)
-
-    world_origin_axes = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.5, origin=[0, 0, 0])
-    vis.add_geometry(world_origin_axes)
-
-    # Canonical camera axes model (at origin, aligned with XYZ)
-    canonical_camera_axes = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.3)
-    
-    # Create the visualizable camera axes object that will be updated
-    current_cam_vis_o3d = o3d.geometry.TriangleMesh()
-    current_cam_vis_o3d.vertices = canonical_camera_axes.vertices
-    current_cam_vis_o3d.triangles = canonical_camera_axes.triangles
-    current_cam_vis_o3d.compute_vertex_normals()
-    current_cam_vis_o3d.paint_uniform_color([0.1, 0.1, 0.7]) # Example color: dark blue
-    vis.add_geometry(current_cam_vis_o3d)
-
-    # Optional: Initial view control settings
-    view_control = vis.get_view_control()
-    if view_control:
-        view_control.set_zoom(0.8)
-        view_control.set_lookat([0, 0, 0]) # Look at the origin
-        view_control.set_up([0, -1, 0])    # OpenCV's Y is down, Open3D's Y is up. This aligns them.
-        view_control.set_front([0, 0, -1]) # Look along the negative Z axis
-    else:
-        print("[WARNING] Failed to get Open3D view control. Initial view settings may not be applied. This might be due to issues with graphics initialization (e.g., GLEW/Wayland).")
-
-    # Accumulated pose of the 'previous' camera in the world (starts at origin)
-    world_R_previous = np.eye(3, dtype=np.float64)
-    world_t_previous = np.zeros((3, 1), dtype=np.float64)
-
-    # Pose of the 'current' camera in the world, to be displayed
-    display_R = np.eye(3, dtype=np.float64)
-    display_t = np.zeros((3, 1), dtype=np.float64)
-
-    print("Open3D visualizer initialized.")
+    # --- Open3D Visualization Setup (Commented out for pyslam) ---
+    # print("Initializing Open3D visualizer...")
+    # vis = o3d.visualization.Visualizer()
+    # vis.create_window(window_name="3D Reconstruction")
+    # point_cloud_o3d = o3d.geometry.PointCloud()
+    # vis.add_geometry(point_cloud_o3d)
+    # world_origin_axes = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.5, origin=[0, 0, 0])
+    # vis.add_geometry(world_origin_axes)
+    # canonical_camera_axes = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.3)
+    # current_cam_vis_o3d = o3d.geometry.TriangleMesh()
+    # current_cam_vis_o3d.vertices = canonical_camera_axes.vertices
+    # current_cam_vis_o3d.triangles = canonical_camera_axes.triangles
+    # current_cam_vis_o3d.compute_vertex_normals()
+    # current_cam_vis_o3d.paint_uniform_color([0.1, 0.1, 0.7])
+    # vis.add_geometry(current_cam_vis_o3d)
+    # view_control = vis.get_view_control()
+    # if view_control:
+    #     view_control.set_zoom(0.8)
+    #     view_control.set_lookat([0, 0, 0])
+    #     view_control.set_up([0, -1, 0])
+    #     view_control.set_front([0, 0, -1])
+    # else:
+    #     print("[WARNING] Failed to get Open3D view control...")
+    # world_R_previous = np.eye(3, dtype=np.float64)
+    # world_t_previous = np.zeros((3, 1), dtype=np.float64)
+    # display_R = np.eye(3, dtype=np.float64)
+    # display_t = np.zeros((3, 1), dtype=np.float64)
+    # print("Open3D visualizer initialization commented out for pyslam.")
 
     while True:
         ret, frame = cap.read()
         if not ret:
-            print("Error: Can't receive frame (stream end?). Exiting feature tracking loop.")
+            print("Error: Can't receive frame (stream end?). Exiting processing loop.")
             break
 
-        # Undistort both color and grayscale frames
+        # Undistort color frame (pyslam might do this internally if raw images are preferred,
+        # but often SLAM systems expect undistorted images or handle distortion via calibration file)
         undistorted_color_frame = cv2.undistort(frame, camera_matrix, dist_coeffs, None, None)
-        gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) # Original gray for detection
-        undistorted_gray_frame = cv2.undistort(gray_frame, camera_matrix, dist_coeffs, None, None)
         
-        # Detect features
-        current_keypoints, current_descriptors = detect_features(
-            undistorted_gray_frame, detector=orb_detector
-        )
+        current_timestamp = time.time()
 
-        # Match features if previous descriptors exist
-        if prev_descriptors is not None and current_descriptors is not None and len(current_descriptors) > 0 and prev_keypoints is not None:
-            good_matches = match_features(prev_descriptors, current_descriptors, detector_type='orb')
-            
-            # Draw matches for visualization
-            if good_matches and prev_undistorted_color_frame_for_drawing is not None:
-                img_matches_display = cv2.drawMatches(
-                    prev_undistorted_color_frame_for_drawing, prev_keypoints,
-                    undistorted_color_frame, current_keypoints,
-                    good_matches, None,
-                    flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS
-                )
-                cv2.imshow("Feature Matches", img_matches_display)
-            else: 
-                # Clear the matches window if no good_matches or no prev frame for drawing
-                cv2.imshow("Feature Matches", np.zeros((480, 640, 3), dtype=np.uint8))
+        # --- Pyslam Frame Processing (Placeholder) ---
+        if slam_system is not None:
+            try:
+                # NOTE: This is a speculative call to pyslam's process_image method.
+                # The actual method signature (e.g., needs BGR or RGB, specific timestamp format)
+                # needs to be verified from pyslam's documentation.
+                # Example:
+                # slam_system.process_image(undistorted_color_frame, timestamp=current_timestamp)
 
-            # --- Two-View Reconstruction ---
-            if len(good_matches) >= MIN_MATCHES_FOR_POSE:
-                # Extract 2D point coordinates for pose estimation
-                points1 = np.float32([prev_keypoints[m.queryIdx].pt for m in good_matches]).reshape(-1, 2)
-                points2 = np.float32([current_keypoints[m.trainIdx].pt for m in good_matches]).reshape(-1, 2)
+                # For now, just indicate it would be processed.
+                # print(f"Timestamp: {current_timestamp:.3f} - Frame processed by pyslam (Placeholder).")
+                pass # Placeholder for actual call
 
-                # Estimate pose
-                # dist_coeffs is used by estimate_pose if points were not undistorted prior to findEssentialMat
-                # However, our points1 and points2 are from undistorted_gray_frame features,
-                # so they are already "undistorted" in that sense.
-                # The estimate_pose function itself passes dist_coeffs=None to cv2.findEssentialMat and cv2.recoverPose
-                # assuming the input points (points1, points2) are already corrected for lens distortion.
-                R_est, t_est, E_est, mask_pose = estimate_pose(points1, points2, camera_matrix, dist_coeffs=None)
-
-                if R_est is not None and t_est is not None:
-                    print("Pose estimated successfully for this frame pair.")
-                    
-                    # Store the pose of the previous camera (N-1) in the world, used for transforming points_3d
-                    prev_cam_R_world = world_R_previous.copy()
-                    prev_cam_t_world = world_t_previous.copy()
-                    
-                    # Accumulate pose: T_world_current = T_world_previous * T_previous_current
-                    # R_est, t_est is T_previous_current (pose of current cam N relative to previous cam N-1)
-                    # display_R, display_t will be T_world_current (pose of current cam N in world)
-                    display_R = prev_cam_R_world @ R_est
-                    display_t = prev_cam_t_world + prev_cam_R_world @ t_est
-
-                    # Update Open3D camera_axes_o3d pose using display_R, display_t
-                    if display_R is not None and display_t is not None:
-                        transform_matrix = np.eye(4)
-                        transform_matrix[:3, :3] = display_R
-                        transform_matrix[:3, 3] = display_t.squeeze()
-
-                        # Start with a fresh copy of the canonical axes
-                        temp_cam_axes = o3d.geometry.TriangleMesh()
-                        temp_cam_axes.vertices = canonical_camera_axes.vertices
-                        temp_cam_axes.triangles = canonical_camera_axes.triangles
-                        
-                        # Apply the transformation
-                        temp_cam_axes.transform(transform_matrix)
-                        
-                        # Update the vertices and triangles of the object already in the scene
-                        current_cam_vis_o3d.vertices = temp_cam_axes.vertices
-                        current_cam_vis_o3d.triangles = temp_cam_axes.triangles
-                        current_cam_vis_o3d.compute_vertex_normals()
-                        # current_cam_vis_o3d.paint_uniform_color([0.1, 0.1, 0.7]) # Already painted at init
-                        
-                        vis.update_geometry(current_cam_vis_o3d)
-                    
-                    # Define projection matrices for triangulation
-                    # P1 is for the previous camera (N-1), in its own coordinate system [K|0]
-                    # P2 is for the current camera (N), relative to camera (N-1) K@[R_est|t_est]
-                    P1 = camera_matrix @ np.hstack((np.eye(3), np.zeros((3, 1))))
-                    P2 = camera_matrix @ np.hstack((R_est, t_est))
-                    
-                    # Triangulate points. These points are in the coordinate system of camera (N-1)
-                    points_3d_relative_to_prev_cam = triangulate_points(points1, points2, P1, P2, inlier_mask=mask_pose)
-                    
-                    if points_3d_relative_to_prev_cam is not None and points_3d_relative_to_prev_cam.shape[0] > 0:
-                        print(f"Reconstructed {points_3d_relative_to_prev_cam.shape[0]} 3D points.")
-                        
-                        # Transform points (which are relative to camera N-1) to world coordinates
-                        # using the world pose of camera N-1 (prev_cam_R_world, prev_cam_t_world)
-                        points_3d_world = (prev_cam_R_world @ points_3d_relative_to_prev_cam.T + prev_cam_t_world).T
-                        
-                        # Update Open3D point_cloud_o3d with points_3d_world
-                        o3d_points = o3d.utility.Vector3dVector(points_3d_world)
-                        point_cloud_o3d.points = o3d_points
-                        # Optional: Add colors (e.g., uniform gray if no other color info)
-                        # if not point_cloud_o3d.has_colors():
-                        #    point_cloud_o3d.paint_uniform_color([0.7, 0.7, 0.7])
-                        vis.update_geometry(point_cloud_o3d)
-
-                    else:
-                        print("Triangulation failed or yielded no 3D points.")
-                        # Keep last known point cloud, or clear it:
-                        # point_cloud_o3d.clear()
-                        # vis.update_geometry(point_cloud_o3d)
-                        pass # Explicitly doing nothing to keep last cloud
-
-                    # Update world_R_previous and world_t_previous for the *next* iteration
-                    # They become the pose of the current camera (N) in the world
-                    world_R_previous = display_R.copy()
-                    world_t_previous = display_t.copy()
-
-                else: # R_est is None or t_est is None (pose estimation failed)
-                    print("Pose estimation failed for this frame pair.")
-                    # Do not update world_R_previous, world_t_previous here, keep last good pose.
-                    # Also, display_R, display_t are not updated, so current_cam_vis_o3d in Open3D remains at last good pose.
-                    # If pose estimation failed, we might not have new points or they might be unreliable.
-                    # Consider clearing point cloud or leaving it. For now, it's handled by points_3d_relative_to_prev_cam check.
-                    pass 
-            else:
-                print(f"Not enough good matches for pose estimation (found {len(good_matches)}, need {MIN_MATCHES_FOR_POSE}).")
-                # No new points, so decision to clear or keep existing cloud applies.
-                # For now, leave existing points.
-                pass
+            except Exception as e:
+                print(f"Error during pyslam process_image: {e}")
+                # Depending on pyslam's behavior, might need to break or continue
         else:
-            # Clear the matches window if no previous descriptors or current descriptors
-            cv2.imshow("Feature Matches", np.zeros((480, 640, 3), dtype=np.uint8))
-            # No new points, so decision to clear or keep existing cloud applies.
-            # For now, leave existing points.
+            # This message will show if actual pyslam initialization is commented out
+            # print(f"Timestamp: {current_timestamp:.3f} - Frame not processed (pyslam_system is None).")
             pass
 
-        # Draw keypoints on the current undistorted color frame
-        if current_keypoints:
-            img_keypoints_live = cv2.drawKeypoints(
-                undistorted_color_frame.copy(), current_keypoints, None, color=(0, 255, 0)
-            )
-            cv2.imshow("Live Feed with Keypoints", img_keypoints_live)
-        else:
-            cv2.imshow("Live Feed with Keypoints", undistorted_color_frame) # Show undistorted if no keypoints
 
-        # Update previous state
-        prev_keypoints = current_keypoints
-        prev_descriptors = current_descriptors
-        prev_undistorted_color_frame_for_drawing = undistorted_color_frame.copy()
+        # --- Original Feature Detection and Matching (Commented out for pyslam) ---
+        # gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        # undistorted_gray_frame = cv2.undistort(gray_frame, camera_matrix, dist_coeffs, None, None)
+        # current_keypoints, current_descriptors = detect_features(
+        #     undistorted_gray_frame, detector=orb_detector
+        # )
+        # if prev_descriptors is not None and current_descriptors is not None and len(current_descriptors) > 0 and prev_keypoints is not None:
+        #     good_matches = match_features(prev_descriptors, current_descriptors, detector_type='orb')
+        #     if good_matches and prev_undistorted_color_frame_for_drawing is not None:
+        #         img_matches_display = cv2.drawMatches(...)
+        #         cv2.imshow("Feature Matches", img_matches_display)
+        #     else:
+        #         cv2.imshow("Feature Matches", np.zeros((480, 640, 3), dtype=np.uint8))
+        #     if len(good_matches) >= MIN_MATCHES_FOR_POSE:
+        #         points1 = np.float32([prev_keypoints[m.queryIdx].pt for m in good_matches]).reshape(-1, 2)
+        #         points2 = np.float32([current_keypoints[m.trainIdx].pt for m in good_matches]).reshape(-1, 2)
+        #         R_est, t_est, E_est, mask_pose = estimate_pose(points1, points2, camera_matrix, dist_coeffs=None)
+        #         if R_est is not None and t_est is not None:
+        #             # ... (Pose accumulation and triangulation logic) ...
+        #             # ... (Open3D updates for camera pose and point cloud) ...
+        #             pass # Original logic commented out
+        #         else: # Pose estimation failed
+        #             pass
+        #     else: # Not enough good matches
+        #         pass
+        # else: # No previous descriptors
+        #     cv2.imshow("Feature Matches", np.zeros((480, 640, 3), dtype=np.uint8))
+        # prev_keypoints = current_keypoints
+        # prev_descriptors = current_descriptors
+        # prev_undistorted_color_frame_for_drawing = undistorted_color_frame.copy()
+        # --- End Original Feature Detection and Matching ---
 
-        # Update Open3D visualizer
-        if not vis.poll_events(): # Process window events and check if closed
-            print("Open3D window was closed by user or events processing failed.")
-            break                 # Exit loop if window was closed
-        vis.update_renderer()     # Render the updated scene
+        # Display the live undistorted feed (can be useful even with pyslam's viewer)
+        cv2.imshow("Live Feed to pyslam", undistorted_color_frame)
+
+        # --- Open3D Visualizer Update (Commented out for pyslam) ---
+        # if not vis.poll_events():
+        #     print("Open3D window was closed by user or events processing failed.")
+        #     break
+        # vis.update_renderer()
         
-        # Process OpenCV window events and check for 'q' key
         key = cv2.waitKey(1) & 0xFF
         if key == ord('q'):
-            print("User pressed 'q'. Quitting feature tracking loop.")
+            print("User pressed 'q'. Quitting processing loop.")
             break
-
 
     # Release resources
     cap.release()
     cv2.destroyAllWindows()
-    print("Feature tracking loop finished.")
+    print("Processing loop finished.")
     
-    if vis:
-        print("Destroying Open3D window...")
-        vis.destroy_window()
+    # --- Pyslam Shutdown (Placeholder) ---
+    if slam_system is not None:
+        try:
+            # NOTE: Speculative call to pyslam's shutdown method.
+            # Example:
+            # slam_system.shutdown()
+            # print("pyslam system shutdown successfully (Placeholder).")
+            pass # Placeholder for actual call
+        except Exception as e:
+            print(f"Error during pyslam shutdown: {e}")
+    print("INFO: Pyslam shutdown would be called here if system was initialized.")
+    # --- End Pyslam Shutdown ---
+
+    # --- Open3D Window Destruction (Commented out for pyslam) ---
+    # if vis:
+    #     print("Destroying Open3D window...")
+    #     vis.destroy_window()
     print("Application finished.")
 
 
