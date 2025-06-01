@@ -25,8 +25,8 @@ slam-experiment/
 * **Pose Estimation**: Estimates camera rotation and translation between two views using the 5-point algorithm for the Essential Matrix and RANSAC. The estimated pose is accumulated over frames.
 * **3D Triangulation**: Reconstructs 3D points from matched 2D keypoints and estimated poses.
 * **Live Feed**: Shows live webcam feed with undistorted images, detected keypoints, and feature matches.
-* **Real-time 3D Reconstruction Visualization**: Displays the triangulated 3D point cloud in a dedicated 3D window using OpenCV's Viz module (if available).
-* **Camera Pose Visualization**: Shows the estimated camera pose trajectory in the 3D window, including the current camera position and the initial world origin.
+* **Real-time 3D Reconstruction Visualization**: Displays the triangulated 3D point cloud in a dedicated 3D window using the Open3D library.
+* **Camera Pose Visualization**: Shows the estimated camera pose trajectory (represented by coordinate axes) in the Open3D window, including the current camera position and the initial world origin.
 
 ## Setup and Installation
 
@@ -59,8 +59,7 @@ Once the virtual environment is activated, install the required Python packages 
 ```bash
 pip install -r requirements.txt
 ```
-The primary dependencies are `numpy` and an OpenCV distribution.
-For full functionality, including 3D visualization, it is **highly recommended to install `opencv-contrib-python`** instead of `opencv-python` (headless) or `opencv-python-headless`. `opencv-contrib-python` includes the Viz module required for 3D rendering. If it's not available, the application will fall back to a simpler placeholder for 3D visualization.
+The primary dependencies are `numpy`, `opencv-python` (for core computer vision tasks), and `open3d` (for 3D visualization). The `requirements.txt` file has been updated to include `open3d`.
 
 ## Running the Application
 
@@ -101,18 +100,16 @@ python src/main.py
         *   "Live Feed with Keypoints": Shows the undistorted live video from the selected camera, with detected ORB keypoints overlaid.
         *   "Feature Matches": Displays matches between features from the current and previous frames.
     *   **3D Visualization Window ("3D Reconstruction")**:
-        *   If `opencv-contrib-python` (with Viz module) is installed and working, a 3D window will open.
-        *   This window displays:
-            *   A coordinate system widget representing the world origin.
-            *   A blue camera frustum representing the initial camera position (world origin).
-            *   A green camera frustum representing the current estimated pose of the camera, updated in real-time.
-            *   A white point cloud representing the triangulated 3D points from the scene.
-        *   You can typically interact with this window using the mouse (e.g., click and drag to rotate, scroll to zoom).
-        *   If the Viz module is unavailable, a "3D Visualization Placeholder" window will appear with a black image. 3D points and pose information will be printed to the console instead, along with a `TODO` message.
-    *   **Console Output**: Information about pose estimation success/failure, number of reconstructed points, and accumulated camera pose (if Viz is disabled) will be printed to the console.
+        *   An Open3D window titled "3D Reconstruction" will open to display the 3D scene.
+        *   This window shows:
+            *   A large coordinate system widget representing the world origin.
+            *   A smaller coordinate system widget representing the current estimated pose of the camera, updated in real-time.
+            *   A point cloud representing the triangulated 3D points from the scene.
+        *   You can interact with this 3D scene using standard Open3D mouse controls (e.g., left-click and drag to rotate, right-click and drag or scroll wheel to zoom, middle-click and drag to pan).
+    *   **Console Output**: Information about pose estimation success/failure and number of reconstructed points will be printed to the console.
 5.  **Exiting**:
-    *   Press **'q'** in any of the OpenCV display windows (Live Feed, Matches, Placeholder) to quit the main loop.
-    *   If the Viz 3D window is open, closing it will also terminate the application.
+    *   Press **'q'** in any of the OpenCV display windows (Live Feed, Matches) to quit the main loop.
+    *   Closing the Open3D "3D Reconstruction" window will also terminate the application.
 
 ## Key Files and Modules
 
@@ -146,3 +143,31 @@ Several parameters can be adjusted by modifying the constants defined in the res
     * `ratio_thresh`: Lowe's ratio test threshold for good matches.
 
 This project provides a foundation for experimenting with visual SLAM techniques.
+
+## Troubleshooting
+
+### 3D Visualization Issues (Open3D)
+
+If you encounter problems with the Open3D visualization window, such as a black screen, crashes, or specific warnings in the console, consider the following:
+
+*   **Symptoms:**
+    *   The "3D Reconstruction" window appears black or does not render correctly.
+    *   The application crashes with an error like `AttributeError: 'NoneType' object has no attribute 'set_zoom'` (or similar errors related to `view_control` not being initialized).
+    *   Console warnings such as `[Open3D WARNING] GLFW Error: Wayland: The platform does not support setting the window position` or `[Open3D WARNING] Failed to initialize GLEW.`
+
+*   **Potential Solutions & Causes:**
+    *   **Wayland Display Server:** If you are using Wayland (common on modern Linux distributions like Ubuntu 22.04+), Open3D/GLFW might have compatibility issues. Try prefixing your run command with environment variables to suggest X11 or a compatible IM module. For example:
+        ```bash
+        GDK_BACKEND=x11 python src/main.py
+        ```
+        or
+        ```bash
+        GLFW_IM_MODULE=ibus python src/main.py
+        ```
+    *   **Missing OpenGL Libraries:** The warning `Failed to initialize GLEW` can indicate missing OpenGL development libraries. On Debian/Ubuntu systems, try installing them:
+        ```bash
+        sudo apt-get update && sudo apt-get install libgl1-mesa-dev libglu1-mesa-dev
+        ```
+    *   **Graphics Drivers:** Ensure your system's graphics drivers are up to date. Outdated or misconfigured drivers are a common source of OpenGL-related problems.
+    *   **`opencv-contrib-python` vs `open3d`:** This project now uses `open3d` for 3D visualization. Ensure `open3d` is correctly installed as per the `requirements.txt` file. Previous visualization methods using `cv2.viz` (from `opencv-contrib-python`) are no longer used.
+    *   **View Control Warning:** If you see a console warning like `[WARNING] Failed to get Open3D view control...`, it means the 3D window might not have initialized its view controls correctly. The initial camera perspective might be off, or interaction might be limited, even if the application doesn't crash immediately. This is often related to the graphics environment issues mentioned above (Wayland, drivers, etc.).
