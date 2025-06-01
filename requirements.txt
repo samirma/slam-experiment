@@ -2,3 +2,4 @@ opencv-python
 numpy
 pyslam
 PyYAML>=5.0
+open3d
