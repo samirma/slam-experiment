@@ -1,3 +1,4 @@
 opencv-python
 numpy
-open3d
+pyslam
+PyYAML>=5.0

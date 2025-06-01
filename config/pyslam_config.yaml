@@ -1,0 +1,70 @@
+# Basic configuration for running pyslam with a live monocular camera
+
+# --------------------------------------------------------------------------------------------
+# Dataset
+# --------------------------------------------------------------------------------------------
+DATASET:
+  # Type of dataset. For a live camera, we might need to use a type like 'VIDEO_DATASET'
+  # or 'FOLDER_DATASET' if pyslam treats live cameras as a stream.
+  # Or, pyslam might have a specific 'LIVE_CAMERA' type.
+  # For now, we'll assume we'll be feeding frames directly, so some dataset-specific
+  # paths might be ignored if pyslam's API allows direct frame processing.
+  # Let's use FOLDER_DATASET as a placeholder type, assuming we might point it to an empty directory
+  # if direct frame processing bypasses dataset path requirements.
+  type: FOLDER_DATASET # Placeholder - actual handling depends on pyslam API for live feeds
+  sensor_type: mono    # mono, stereo, rgbd
+
+  FOLDER_DATASET:
+    name: live_camera_feed # Arbitrary name
+    base_path: ""          # Not used if we feed frames directly
+    sequence: ""           # Not used if we feed frames directly
+
+    # Path to the camera calibration file generated in the previous step.
+    # IMPORTANT: This currently assumes camera_index 0.
+    # This might need to be dynamically updated or pyslam might need to be
+    # initialized with a direct path to the correct settings file in main.py.
+    settings_file: "config/pyslam_settings_idx0.yaml" # Relative to pyslam execution path or an absolute path
+
+    glob_pattern: "*.png"  # Not used if we feed frames directly
+    timestamps_file: ""    # Not used if we feed frames directly
+    groundtruth_file: ""   # No ground truth for live feed typically
+    load_gt_ate: False
+
+# --------------------------------------------------------------------------------------------
+# Global Parameters (Overrides for pyslam's internal config_parameters.py)
+# --------------------------------------------------------------------------------------------
+GLOBAL_PARAMETERS:
+  # SLAM features
+  kFeatureType: ORB         # Feature type (e.g., ORB, SIFT, SuperPoint)
+  kUseLoopClosing: True     # Enable/disable loop closing
+  kUseViewer: True          # Enable pyslam's default viewer (Pangolin)
+
+  # Add other parameters as needed, for example:
+  # ORBextractor:
+  #   nFeatures: 1000
+  #   scaleFactor: 1.2
+  #   nLevels: 8
+  #   iniThFAST: 20
+  #   minThFAST: 7
+
+# --------------------------------------------------------------------------------------------
+# System State (for loading/saving maps - initially off for live SLAM)
+# --------------------------------------------------------------------------------------------
+SYSTEM_STATE:
+  load_state: False
+  # folder_path: results/slam_state # Default path if saving
+
+# --------------------------------------------------------------------------------------------
+# Trajectory Saving (initially off)
+# --------------------------------------------------------------------------------------------
+SAVE_TRAJECTORY:
+  save_trajectory: False
+  # format_type: tum # kitti, euroc
+  # output_folder: results/trajectory
+  # basename: live_trajectory
+
+# --------------------------------------------------------------------------------------------
+# Other pyslam specific configurations can be added here based on its documentation
+# For example, settings for specific modules like LoopClosing, VolumetricIntegration etc.
+# We'll keep it minimal for now.
+# --------------------------------------------------------------------------------------------
