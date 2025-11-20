@@ -10,6 +10,7 @@ ENV LD_LIBRARY_PATH=${CUDA_HOME}/lib64:${LD_LIBRARY_PATH}
 ENV TORCH_CUDA_ARCH_LIST="7.5 8.0 8.6 8.9 9.0"
 
 # Install system dependencies
+# Added libgl1-mesa-dri, mesa-utils, libx11-6 for X11/OpenGL support (visualization)
 RUN apt-get update && apt-get install -y \
     git \
     python3 \
@@ -18,6 +19,9 @@ RUN apt-get update && apt-get install -y \
     wget \
     curl \
     libgl1-mesa-glx \
+    libgl1-mesa-dri \
+    mesa-utils \
+    libx11-6 \
     libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 

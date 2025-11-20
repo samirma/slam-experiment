@@ -58,17 +58,33 @@ To avoid messing with system dependencies, you can use Docker.
     docker build -t mast3r-slam-webcam .
     ```
 
-3.  **Run the container:**
-    You need to pass the GPU and the webcam devices (or mount video files) to the container.
+3.  **Run the container (Headless/No GUI):**
     ```bash
-    docker run --gpus all --device /dev/video0:/dev/video0 --device /dev/video1:/dev/video1 -v $(pwd)/videos:/app/videos -it mast3r-slam-webcam
+    docker run --gpus all --device /dev/video0:/dev/video0 -it mast3r-slam-webcam
     ```
-    *(Adjust `/dev/videoX` mapping as needed for your cameras).*
 
-    Inside the container, you can run:
+### Visualizing from Docker (Real-time GUI)
+
+To see the real-time 3D reconstruction window from the Ubuntu host:
+
+1.  **Allow X connections from the container:**
+    On your Ubuntu host, run:
     ```bash
-    python3 run_slam.py --inputs 0 videos/my_video.mp4
+    xhost +local:docker
     ```
+
+2.  **Run the container with X11 forwarding:**
+    Add `-e DISPLAY=$DISPLAY` and `-v /tmp/.X11-unix:/tmp/.X11-unix` to the command.
+
+    ```bash
+    docker run --gpus all \
+        --device /dev/video0:/dev/video0 \
+        -e DISPLAY=$DISPLAY \
+        -v /tmp/.X11-unix:/tmp/.X11-unix \
+        -it mast3r-slam-webcam
+    ```
+
+    *Note: If you are running on multiple cameras, multiple windows will open.*
 
 ## macOS Support
 
