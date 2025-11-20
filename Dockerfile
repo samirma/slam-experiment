@@ -5,6 +5,11 @@ ENV CUDA_HOME=/usr/local/cuda
 ENV PATH=${CUDA_HOME}/bin:${PATH}
 ENV LD_LIBRARY_PATH=${CUDA_HOME}/lib64:${LD_LIBRARY_PATH}
 
+# Set TORCH_CUDA_ARCH_LIST to ensure extensions build for common architectures
+# even if no GPU is present during build time.
+# 7.5 (Turing), 8.0 (Ampere), 8.6 (Ampere), 8.9 (Ada), 9.0 (Hopper)
+ENV TORCH_CUDA_ARCH_LIST="7.5 8.0 8.6 8.9 9.0"
+
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
     git \
@@ -20,21 +25,21 @@ RUN apt-get update && apt-get install -y \
 # Upgrade pip
 RUN python3 -m pip install --upgrade pip
 
+# Install build dependencies
+# requests is needed for setup_env.py
+# numpy/setuptools often needed for building extensions
+RUN python3 -m pip install requests numpy setuptools opencv-python-headless
+
+# Configure git to allow operations on /app (needed for submodule update)
+RUN git config --global --add safe.directory /app
+RUN git config --global --add safe.directory /app/MASt3R-SLAM
+
 # Copy the repository
 WORKDIR /app
 COPY . /app
 
 # Run setup script (this installs python dependencies, patches submodule, and downloads checkpoints)
-# Note: We run this during build to bake everything into the image.
-# Ideally, checkpoints should be mounted, but the setup script downloads them.
-# We can modify setup_env.py to skip download if files exist, or we can let it run.
-# For a robust docker image, baking code is good, but checkpoints are large.
-# We will let setup_env.py run.
-# IMPORTANT: setup_env.py requires MASt3R-SLAM submodule to be present.
-# Since we COPY . /app, the empty directory might be there, but not content if not initialized.
-# The setup_env.py has logic to `git submodule update --init`, but inside a container, git auth might fail if using SSH.
-# Public HTTPS URLs should work.
-
+# We rely on the script to handle the heavy lifting.
 RUN python3 setup_env.py
 
 # Default command

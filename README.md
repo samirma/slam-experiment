@@ -1,12 +1,12 @@
 # MASt3R-SLAM for Webcams
 
-This project provides a wrapper around [MASt3R-SLAM](https://github.com/rmurai0610/MASt3R-SLAM) to enable real-time 3D reconstruction using standard webcams.
+This project provides a wrapper around [MASt3R-SLAM](https://github.com/rmurai0610/MASt3R-SLAM) to enable real-time 3D reconstruction using standard webcams and video files.
 
 ## Prerequisites
 
 *   **NVIDIA GPU**: Required for MASt3R-SLAM (CUDA dependencies).
 *   **Ubuntu** (Recommended) or Linux with NVIDIA Container Toolkit.
-*   **Webcams**: One or more monocular webcams.
+*   **Webcams**: One or more monocular webcams, or video files.
 
 ## Setup (Native)
 
@@ -23,11 +23,25 @@ This project provides a wrapper around [MASt3R-SLAM](https://github.com/rmurai06
     ```
 
 3.  **Run SLAM:**
-    To run on all available cameras:
+
+    **Auto-detect and run on all webcams:**
     ```bash
     python3 run_slam.py --all
     ```
-    To run on a specific camera (e.g., camera 0):
+
+    **Run on specific inputs (webcams or video files):**
+    ```bash
+    # Run on camera 0 and camera 1
+    python3 run_slam.py --inputs 0 1
+
+    # Run on a video file
+    python3 run_slam.py --inputs my_video.mp4
+
+    # Run on a camera and a video file simultaneously
+    python3 run_slam.py --inputs 0 my_video.mp4
+    ```
+
+    **Run on a specific camera (Legacy):**
     ```bash
     python3 run_slam.py --cam-id 0
     ```
@@ -45,11 +59,16 @@ To avoid messing with system dependencies, you can use Docker.
     ```
 
 3.  **Run the container:**
-    You need to pass the GPU and the webcam devices to the container.
+    You need to pass the GPU and the webcam devices (or mount video files) to the container.
     ```bash
-    docker run --gpus all --device /dev/video0:/dev/video0 --device /dev/video1:/dev/video1 -it mast3r-slam-webcam
+    docker run --gpus all --device /dev/video0:/dev/video0 --device /dev/video1:/dev/video1 -v $(pwd)/videos:/app/videos -it mast3r-slam-webcam
     ```
     *(Adjust `/dev/videoX` mapping as needed for your cameras).*
+
+    Inside the container, you can run:
+    ```bash
+    python3 run_slam.py --inputs 0 videos/my_video.mp4
+    ```
 
 ## macOS Support
 
