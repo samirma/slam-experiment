@@ -86,21 +86,26 @@ def main():
     for f in files:
         download_file(f"{base_url}/{f}", f"MASt3R-SLAM/checkpoints/{f}")
 
-    # 5. Install custom dependencies (if not already)
+    # 5. Install MASt3R-SLAM dependencies
+    # Install these BEFORE lietorch, as they include torch (if not present) and other build deps.
+    if os.path.exists("MASt3R-SLAM"):
+        print("Installing MASt3R-SLAM dependencies...")
+        if not run_command(f"cd MASt3R-SLAM && {sys.executable} -m pip install -e ."):
+            print("ERROR: Failed to install MASt3R-SLAM dependencies.")
+            sys.exit(1)
+
+    # 6. Install custom dependencies
     # Try to install lietorch
     if not run_command(f"{sys.executable} -c 'import lietorch'"):
          print("lietorch not found. Attempting to install...")
          if not os.path.exists("lietorch"):
              run_command("git clone https://github.com/princeton-vl/lietorch.git")
          # Try to install
-         run_command(f"cd lietorch && {sys.executable} setup.py install")
+         if not run_command(f"cd lietorch && {sys.executable} setup.py install"):
+             print("ERROR: Failed to install lietorch. Please check if CUDA is available and PyTorch is installed.")
+             sys.exit(1)
 
-    # Install main requirements from submodule if present
-    if os.path.exists("MASt3R-SLAM"):
-        print("Installing MASt3R-SLAM dependencies...")
-        run_command(f"cd MASt3R-SLAM && {sys.executable} -m pip install -e .")
-
-    print("Setup complete (or attempted).")
+    print("Setup complete.")
     print("To run SLAM: python run_slam.py")
 
 if __name__ == "__main__":
