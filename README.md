@@ -1,100 +1,66 @@
-# MASt3R-SLAM for Webcams
+# MASt3R-SLAM with Rerun Visualization
 
-This project provides a wrapper around [MASt3R-SLAM](https://github.com/rmurai0610/MASt3R-SLAM) to enable real-time 3D reconstruction using standard webcams and video files.
+This repository hosts a Dockerized version of [MASt3R-SLAM](https://github.com/rerun-io/mast3r-slam), which is an unofficial implementation of "MASt3R-SLAM: Real-Time Dense SLAM with 3D Reconstruction Priors" using Rerun for visualization.
 
-## Prerequisites
+## Setup
 
-*   **NVIDIA GPU**: Required for MASt3R-SLAM (CUDA dependencies).
-*   **Ubuntu** (Recommended) or Linux with NVIDIA Container Toolkit.
-*   **Webcams**: One or more monocular webcams, or video files.
+The environment is set up using Docker.
 
-## Setup (Native)
-
-1.  **Clone the repository:**
-    ```bash
-    git clone --recursive <repo_url>
-    cd <repo_name>
-    ```
-
-2.  **Run the setup script:**
-    This script checks for CUDA, initializes submodules, installs dependencies, and downloads necessary checkpoints.
-    ```bash
-    python3 setup_env.py
-    ```
-
-3.  **Run SLAM:**
-
-    **Auto-detect and run on all webcams:**
-    ```bash
-    python3 run_slam.py --all
-    ```
-
-    **Run on specific inputs (webcams or video files):**
-    ```bash
-    # Run on camera 0 and camera 1
-    python3 run_slam.py --inputs 0 1
-
-    # Run on a video file
-    python3 run_slam.py --inputs my_video.mp4
-
-    # Run on a camera and a video file simultaneously
-    python3 run_slam.py --inputs 0 my_video.mp4
-    ```
-
-    **Run on a specific camera (Legacy):**
-    ```bash
-    python3 run_slam.py --cam-id 0
-    ```
-
-## Docker Setup (Ubuntu + NVIDIA)
-
-To avoid messing with system dependencies, you can use Docker.
-
-1.  **Install NVIDIA Container Toolkit:**
-    Follow instructions at: https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html
-
-2.  **Build the image:**
-    ```bash
-    docker build -t mast3r-slam-webcam .
-    ```
-
-3.  **Run the container (Headless/No GUI):**
-    ```bash
-    docker run --gpus all --device /dev/video0:/dev/video0 -it mast3r-slam-webcam
-    ```
-
-### Visualizing from Docker (Real-time GUI)
-
-To see the real-time 3D reconstruction window from the Ubuntu host:
-
-1.  **Allow X connections from the container:**
-    On your Ubuntu host, run:
-    ```bash
-    xhost +local:docker
-    ```
-
-2.  **Run the container with X11 forwarding:**
-    Add `-e DISPLAY=$DISPLAY` and `-v /tmp/.X11-unix:/tmp/.X11-unix` to the command.
+1.  **Build the Docker image:**
 
     ```bash
-    docker run --gpus all \
-        --device /dev/video0:/dev/video0 \
-        -e DISPLAY=$DISPLAY \
-        -v /tmp/.X11-unix:/tmp/.X11-unix \
-        -it mast3r-slam-webcam
+    docker build -t mast3r-slam .
     ```
 
-    *Note: If you are running on multiple cameras, multiple windows will open.*
+    This will install all dependencies, including CUDA 12.4, Python 3.11, PyTorch, and compile the necessary custom kernels (`curope`, `asmk`). It will also download the required model checkpoints.
 
-## macOS Support
+## Usage
 
-**Status: Not Supported / Experimental**
+### Running the Gradio App
 
-MASt3R-SLAM relies heavily on **CUDA** custom kernels (in `curope`, `croco`, `lietorch`, and the backend). These kernels are compiled specifically for NVIDIA GPUs.
+To run the interactive Gradio interface:
 
-*   **Apple Silicon (M1/M2/M3):** Not supported. There is no MPS (Metal) port of the custom CUDA kernels.
-*   **Intel Mac:** Not supported unless you use an external NVIDIA GPU (e-GPU) and pass it through to a Linux VM/Docker, which is a complex setup.
+```bash
+docker run --gpus all -p 7860:7860 -p 9876:9876 -it mast3r-slam python3 run_slam.py --app
+```
 
-If you attempt to build the Docker image on macOS (e.g., via Docker Desktop), it will fail or run in emulation mode (extremely slow) and crash when attempting to load CUDA libraries.
+Then open `http://localhost:7860` in your browser.
 
-For development (editing code only), you can build the image without the final execution step, but the Python code will not run successfully.
+### Running on Video File or Camera
+
+To run SLAM on a specific video file:
+
+```bash
+docker run --gpus all -p 9876:9876 -v /path/to/your/data:/data -it mast3r-slam python3 run_slam.py --input /data/your_video.mp4
+```
+
+To run on a webcam (pass device to docker):
+
+```bash
+docker run --gpus all -p 9876:9876 --device /dev/video0 -it mast3r-slam python3 run_slam.py --input 0
+```
+
+### Real-time Visualization
+
+The application starts a Rerun server on port 9876. You can connect to it using a Rerun viewer on your host machine.
+
+1.  Install Rerun on your host: `pip install rerun-sdk`
+2.  Run `rerun` on your host.
+3.  Or, if the script logs to a file (rrd), you can open that. By default, `mast3r-slam` with rerun usually streams to the connected viewer or starts a web viewer.
+    *   If running Gradio, the visualization is embedded.
+    *   If running CLI, ensure you have port 9876 forwarded.
+
+### Modes
+
+You can choose between `base` (default, more accurate, 512px) and `fast` (less accurate, 224px) modes using `--mode`:
+
+```bash
+python3 run_slam.py --input ... --mode fast
+```
+
+## Acknowledgements
+
+*   [MASt3R-SLAM](https://github.com/rmurai0610/MASt3R-SLAM)
+*   [rerun-io/mast3r-slam](https://github.com/rerun-io/mast3r-slam)
+*   [MASt3R](https://github.com/naver/mast3r)
+*   [DUSt3R](https://github.com/naver/dust3r)

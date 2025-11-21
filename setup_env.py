@@ -2,8 +2,6 @@ import os
 import sys
 import subprocess
 import shutil
-import requests
-import glob
 
 def check_command(command):
     return shutil.which(command) is not None
@@ -17,55 +15,6 @@ def run_command(command, cwd=None):
         return False
     return True
 
-def download_file(url, dest_path):
-    if os.path.exists(dest_path):
-        print(f"{dest_path} already exists, skipping download.")
-        return
-    print(f"Downloading {url} to {dest_path}...")
-    response = requests.get(url, stream=True)
-    if response.status_code == 200:
-        with open(dest_path, 'wb') as f:
-            for chunk in response.iter_content(1024):
-                f.write(chunk)
-    else:
-        print(f"Failed to download {url}")
-
-def verify_calibration():
-    print("Verifying calibration files...")
-    # Check for standard calibration files
-    if os.path.exists("calibration.yaml") or os.path.exists("intrinsics.yaml"):
-        print("Calibration file found.")
-        return True
-
-    print("WARNING: No calibration file found (calibration.yaml or intrinsics.yaml).")
-    print("MASt3R-SLAM can run without calibration, but accuracy might be lower.")
-    print("To calibrate your cameras, you can use OpenCV's calibration sample:")
-    print("https://docs.opencv.org/4.x/dc/dbb/tutorial_py_calibration.html")
-    return False
-
-def apply_patches():
-    print("Applying patches...")
-    # Ensure submodule is initialized
-    if not os.path.exists("MASt3R-SLAM/main.py"):
-        print("MASt3R-SLAM submodule not found. Initializing...")
-        run_command("git submodule update --init --recursive")
-
-    # Copy modified dataloader
-    if os.path.exists("patches/dataloader.py"):
-        dest = "MASt3R-SLAM/mast3r_slam/dataloader.py"
-        print(f"Copying patches/dataloader.py to {dest}")
-        shutil.copy("patches/dataloader.py", dest)
-    else:
-        print("ERROR: patches/dataloader.py not found!")
-
-    # Copy fixed setup.py
-    if os.path.exists("patches/setup.py"):
-        dest = "MASt3R-SLAM/setup.py"
-        print(f"Copying patches/setup.py to {dest}")
-        shutil.copy("patches/setup.py", dest)
-    else:
-        print("ERROR: patches/setup.py not found!")
-
 def main():
     print("Checking environment...")
 
@@ -74,47 +23,100 @@ def main():
         print("WARNING: nvcc (CUDA) not found. MASt3R-SLAM requires CUDA.")
         print("Please ensure CUDA is installed and in your PATH.")
 
-    # 2. Apply Code Patches
-    apply_patches()
-
-    # 3. Check Calibration
-    verify_calibration()
-
-    # 4. Setup Checkpoints
-    print("Setting up checkpoints...")
-    os.makedirs("MASt3R-SLAM/checkpoints", exist_ok=True)
-
-    base_url = "https://download.europe.naverlabs.com/ComputerVision/MASt3R"
-    files = [
-        "MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric.pth",
-        "MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric_retrieval_trainingfree.pth",
-        "MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric_retrieval_codebook.pkl"
+    # Install generic dependencies
+    print("Installing Python dependencies...")
+    # List from pixi.toml and pyproject.toml
+    # Note: eigen is a C++ library, not installed via pip here (assumed system install)
+    dependencies = [
+        "numpy<2",
+        "tyro>=0.9.1,<0.10",
+        "rerun-sdk>=0.22.0,<0.23",
+        "beartype>=0.20.0,<0.21",
+        "jaxtyping>=0.2.36,<0.3",
+        "gradio<5",
+        "opencv-python>=4.11.0,<5",
+        "pyserde>=0.23.0,<0.24",
+        "open3d>=0.19.0,<0.20",
+        "einops",
+        "pyrealsense2",
+        "evo",
+        "natsort",
+        "pykdtree",
+        # From thirdparty/mast3r/setup.py
+        "scikit-learn",
+        "roma",
+        "matplotlib",
+        "tqdm",
+        "scipy",
+        "trimesh",
+        "tensorboard",
+        "pyglet",
+        "huggingface_hub[torch]>=0.22",
     ]
 
-    for f in files:
-        download_file(f"{base_url}/{f}", f"MASt3R-SLAM/checkpoints/{f}")
+    cmd = f"{sys.executable} -m pip install " + " ".join([f"'{d}'" for d in dependencies])
+    if not run_command(cmd):
+        sys.exit(1)
 
-    # 5. Install MASt3R-SLAM dependencies
-    # Install these BEFORE lietorch, as they include torch (if not present) and other build deps.
-    if os.path.exists("MASt3R-SLAM"):
-        print("Installing MASt3R-SLAM dependencies...")
-        if not run_command(f"cd MASt3R-SLAM && {sys.executable} -m pip install -e ."):
-            print("ERROR: Failed to install MASt3R-SLAM dependencies.")
-            sys.exit(1)
+    # Install simplecv
+    print("Installing simplecv...")
+    if not run_command(f"{sys.executable} -m pip install git+https://github.com/pablovela5620/simplecv.git"):
+        sys.exit(1)
 
-    # 6. Install custom dependencies
-    # Try to install lietorch
-    if not run_command(f"{sys.executable} -c 'import lietorch'"):
-         print("lietorch not found. Attempting to install...")
-         if not os.path.exists("lietorch"):
-             run_command("git clone https://github.com/princeton-vl/lietorch.git")
-         # Try to install
-         if not run_command(f"cd lietorch && {sys.executable} setup.py install"):
-             print("ERROR: Failed to install lietorch. Please check if CUDA is available and PyTorch is installed.")
+    # Install gradio-rerun wheel
+    print("Installing gradio-rerun...")
+    if not run_command(f"{sys.executable} -m pip install https://huggingface.co/datasets/pablovela5620/gradio-rr-wheels/resolve/main/gradio_rerun-0.0.11-py3-none-any.whl"):
+        sys.exit(1)
+
+    # Install lietorch
+    print("Installing lietorch...")
+    # Try wheel first (from pixi.toml)
+    # wheel_url = "https://huggingface.co/datasets/pablovela5620/mast3r-slam-whls/resolve/main/lietorch-0.2-cp311-cp311-linux_x86_64.whl"
+    # if not run_command(f"{sys.executable} -m pip install {wheel_url}"):
+    #     print("Wheel installation failed, trying from source...")
+    if not run_command(f"{sys.executable} -m pip install git+https://github.com/princeton-vl/lietorch.git"):
+        sys.exit(1)
+
+
+    # Install thirdparty/mast3r
+    # This handles curope and asmk compilation
+    print("Installing mast3r (including curope and asmk)...")
+    if os.path.exists("MASt3R-SLAM/thirdparty/mast3r"):
+         if not run_command(f"{sys.executable} -m pip install -e MASt3R-SLAM/thirdparty/mast3r"):
+             print("ERROR: Failed to install thirdparty/mast3r")
              sys.exit(1)
+    else:
+        print("ERROR: MASt3R-SLAM/thirdparty/mast3r not found")
+        sys.exit(1)
+
+    # Download checkpoints
+    print("Downloading checkpoints...")
+    checkpoints_dir = "MASt3R-SLAM/checkpoints"
+    os.makedirs(checkpoints_dir, exist_ok=True)
+
+    # We can use huggingface-cli if installed, which is installed via dependencies
+    try:
+        # Check if files exist to avoid re-downloading via CLI if possible, though CLI handles it too.
+        # Using python script to download to ensure cross-platform compatibility if needed,
+        # but simple CLI command is easier if we trust huggingface_hub is installed.
+        files = [
+            "MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric.pth",
+            "MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric_retrieval_codebook.pkl",
+            "MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric_retrieval_trainingfree.pth"
+        ]
+        missing = [f for f in files if not os.path.exists(os.path.join(checkpoints_dir, f))]
+
+        if missing:
+            run_command(f"huggingface-cli download pablovela5620/mast3r-slam {' '.join(files)} --repo-type model --local-dir {checkpoints_dir}")
+    except Exception as e:
+        print(f"Error downloading checkpoints: {e}")
+
+    # Install MASt3R-SLAM
+    print("Installing MASt3R-SLAM...")
+    if not run_command(f"{sys.executable} -m pip install --no-build-isolation -e MASt3R-SLAM"):
+        sys.exit(1)
 
     print("Setup complete.")
-    print("To run SLAM: python run_slam.py")
 
 if __name__ == "__main__":
     main()

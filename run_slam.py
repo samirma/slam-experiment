@@ -2,129 +2,67 @@ import cv2
 import subprocess
 import sys
 import argparse
-import time
 import threading
 import os
 
-def list_cameras():
-    print("Detecting cameras...")
-    available_cameras = []
-    # Check first 10 indices
-    for i in range(10):
-        cap = cv2.VideoCapture(i)
-        if cap.isOpened():
-            print(f"Camera {i} is available")
-            available_cameras.append(i)
-            cap.release()
-    return available_cameras
-
-def run_slam_process(dataset_arg):
+def run_slam_process(dataset_arg, mode="base", port=9876):
     print(f"Starting SLAM on input: {dataset_arg}...")
-    # Command to run main.py
-    cmd = [sys.executable, "MASt3R-SLAM/main.py", "--dataset", str(dataset_arg), "--config", "MASt3R-SLAM/config/base.yaml"]
+    # Command to run mast3r_slam_inference.py
+    # The new repo uses tools/mast3r_slam_inference.py
+
+    config_file = "MASt3R-SLAM/config/base.yaml"
+    if mode == "fast":
+        config_file = "MASt3R-SLAM/config/fast.yaml"
+
+    img_size = 512
+    if mode == "fast":
+        img_size = 224
+
+    cmd = [
+        sys.executable, "MASt3R-SLAM/tools/mast3r_slam_inference.py",
+        "--dataset", str(dataset_arg),
+        "--config", config_file,
+        "--img-size", str(img_size),
+        "--rerun-port", str(port)
+    ]
 
     try:
         subprocess.check_call(cmd)
     except subprocess.CalledProcessError as e:
         print(f"SLAM process for {dataset_arg} failed or was stopped.")
 
+def start_gradio_app():
+    print("Starting Gradio App...")
+    cmd = [sys.executable, "MASt3R-SLAM/tools/gradio-app.py"]
+    try:
+        subprocess.check_call(cmd)
+    except subprocess.CalledProcessError as e:
+        print(f"Gradio app failed or was stopped.")
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Run SLAM on available cameras or video files.")
-    parser.add_argument("--cam-id", type=int, help="Specific camera ID to use (deprecated, use --inputs).")
-    parser.add_argument("--inputs", nargs='+', help="List of inputs to process. Can be camera IDs (0, 1) or file paths (video.mp4).")
-    parser.add_argument("--all", action="store_true", help="Run on all detected webcams simultaneously (High Load!)")
-    parser.add_argument("--load-map", action="store_true", help="Attempt to load existing map (Not fully supported by MASt3R-SLAM)")
+    parser = argparse.ArgumentParser(description="Run MASt3R-SLAM with Rerun visualization.")
+    parser.add_argument("--input", type=str, help="Input video file path or camera index (default: run Gradio app).")
+    parser.add_argument("--mode", type=str, choices=["base", "fast"], default="base", help="Mode: 'base' (accurate, 512px) or 'fast' (less accurate, 224px).")
+    parser.add_argument("--app", action="store_true", help="Run the Gradio App interface.")
+    parser.add_argument("--rerun-port", type=int, default=9876, help="Port for Rerun visualization.")
 
     args = parser.parse_args()
 
-    if args.load_map:
-        print("WARNING: Map loading requested, but MASt3R-SLAM does not natively support loading a full persistent map from disk for relocalization.")
-        print("A new map will be created. Relocalization is only supported within the session.")
-
-    # Handle --inputs (Explicit list)
-    if args.inputs:
-        if len(args.inputs) > 1:
-             print("WARNING: Running SLAM on multiple inputs simultaneously requires significant GPU resources.")
-
-        threads = []
-        for inp in args.inputs:
-            # Determine if input is an ID or path
-            dataset_arg = inp
-            if inp.isdigit():
-                 # Assume it's a camera ID
-                 dataset_arg = f"webcam{inp}"
-            # If it's a file or "webcamX", pass as is.
-
-            t = threading.Thread(target=run_slam_process, args=(dataset_arg,))
-            t.start()
-            threads.append(t)
-
-        for t in threads:
-            t.join()
+    # If --app is specified or no input is given, run the Gradio app
+    if args.app or not args.input:
+        start_gradio_app()
         return
 
-    # Handle --cam-id (Legacy single cam)
-    if args.cam_id is not None:
-        run_slam_process(f"webcam{args.cam_id}")
-        return
+    # Run CLI inference
+    if args.input:
+        dataset_arg = args.input
+        # If input is a digit, assume it's a webcam index, but the script likely expects "webcamX" or just int if handled by simplecv
+        # Looking at typical mast3r-slam usage, if it uses simplecv/opencv, integer might work or path.
+        # The previous run_slam.py prepended "webcam", but let's pass as is first or check simplecv docs if available.
+        # Assuming the underlying script handles paths vs ints.
 
-    # Handle --all (Auto-detect)
-    cameras = list_cameras()
-    if args.all:
-        if not cameras:
-            print("No cameras detected.")
-            return
-
-        print("WARNING: Running SLAM on multiple cameras simultaneously requires significant GPU resources (e.g. RTX 3090/4090).")
-        threads = []
-        for cam in cameras:
-            t = threading.Thread(target=run_slam_process, args=(f"webcam{cam}",))
-            t.start()
-            threads.append(t)
-
-        for t in threads:
-            t.join()
-        return
-
-    # Interactive mode
-    if not cameras:
-        print("No cameras detected.")
-        # We can still ask for file input
-    else:
-        print("Available cameras:", cameras)
-
-    print("Enter camera ID (e.g. 0), file path, list separated by space, 'all', or 'q' to quit.")
-    choice = input("Choice: ")
-
-    if choice.lower() == 'q':
-        return
-    elif choice.lower() == 'all':
-        if not cameras:
-             print("No cameras to run 'all' on.")
-             return
-        print("WARNING: Running SLAM on multiple cameras simultaneously requires significant GPU resources.")
-        threads = []
-        for cam in cameras:
-            t = threading.Thread(target=run_slam_process, args=(f"webcam{cam}",))
-            t.start()
-            threads.append(t)
-        for t in threads:
-            t.join()
-    else:
-        # Split by space to support multiple inputs in interactive mode too
-        inputs = choice.split()
-        threads = []
-        for inp in inputs:
-            dataset_arg = inp
-            if inp.isdigit():
-                dataset_arg = f"webcam{inp}"
-
-            t = threading.Thread(target=run_slam_process, args=(dataset_arg,))
-            t.start()
-            threads.append(t)
-
-        for t in threads:
-            t.join()
+        run_slam_process(dataset_arg, mode=args.mode, port=args.rerun_port)
 
 if __name__ == "__main__":
     main()
