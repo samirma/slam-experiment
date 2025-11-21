@@ -58,6 +58,14 @@ def apply_patches():
     else:
         print("ERROR: patches/dataloader.py not found!")
 
+    # Copy fixed setup.py
+    if os.path.exists("patches/setup.py"):
+        dest = "MASt3R-SLAM/setup.py"
+        print(f"Copying patches/setup.py to {dest}")
+        shutil.copy("patches/setup.py", dest)
+    else:
+        print("ERROR: patches/setup.py not found!")
+
 def main():
     print("Checking environment...")
 
